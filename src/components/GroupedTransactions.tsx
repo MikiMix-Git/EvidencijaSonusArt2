@@ -33,16 +33,30 @@ function tokenize(text: string): string[] {
 
 // Reči koje ne nose značenje za grupisanje
 const STOP_WORDS = new Set([
+  // Valute
   'eur', 'ref', 'bam', 'usd', 'rsd', 'hrk',
-  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
-  '00', '01', '02', '03', '04', '05', '06', '07', '08', '09',
+  // Česte kratke reči
   'td', 'do', 'oo', 'd', 'o', 'n', 'za', 'na', 'u', 'i', 'se',
-  'the', 'a', 'an', 'of', 'to', 'in', 'is', 'it', 'and', 'or'
+  'the', 'a', 'an', 'of', 'to', 'in', 'is', 'it', 'and', 'or',
+  'our', 'sha', 'br', 'nr',
+  // Zajedničke reči u bankovnim izvodima
+  'operativni', 'tecaj',
 ]);
 
+// Funkcija za filtriranje - uklanja stop words I sve brojeve
 function filterStopWords(words: string[]): string[] {
-  return words.filter(w => !STOP_WORDS.has(w));
+  return words.filter(w => {
+    // Ukloni stop words
+    if (STOP_WORDS.has(w)) return false;
+    // Ukloni sve čiste brojeve (npr. "4016100575", "195583000", "000")
+    if (/^\d+$/.test(w)) return false;
+    // Ukloni brojeve sa decimalnim zarezom/tačkom (npr. "95583000")
+    if (/^\d+[.,]\d+$/.test(w)) return false;
+    return true;
+  });
 }
+
+// Stari filterStopWords je zamenjen novim koji filtrira i brojeve
 
 // Nađi najduži zajednički substring reči između dva niza
 function findLongestCommonSubsequence(words1: string[], words2: string[]): string[] {

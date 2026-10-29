@@ -17,6 +17,23 @@ function tokenize(text: string): string[] {
     .filter(w => w.length > 0);
 }
 
+// Reči koje ne nose značenje za grupisanje
+const STOP_WORDS = new Set([
+  'eur', 'ref', 'bam', 'usd', 'rsd', 'hrk',
+  'td', 'do', 'oo', 'd', 'o', 'n', 'za', 'na', 'u', 'i', 'se',
+  'the', 'a', 'an', 'of', 'to', 'in', 'is', 'it', 'and', 'or',
+  'our', 'sha', 'br', 'nr', 'operativni', 'tecaj',
+]);
+
+function filterStopWords(words: string[]): string[] {
+  return words.filter(w => {
+    if (STOP_WORDS.has(w)) return false;
+    if (/^\d+$/.test(w)) return false;
+    if (/^\d+[.,]\d+$/.test(w)) return false;
+    return true;
+  });
+}
+
 function findLongestCommonSubsequence(words1: string[], words2: string[]): string[] {
   let longest: string[] = [];
   
