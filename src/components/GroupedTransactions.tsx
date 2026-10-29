@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Transaction, formatCurrency } from '../utils/BankStatementParser';
-import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag } from 'lucide-react';
+import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, Bug } from 'lucide-react';
+import { GroupingDebugger } from './GroupingDebugger';
 
 interface GroupedTransactionsProps {
   transactions: Transaction[];
@@ -64,6 +65,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
   const [minWords, setMinWords] = useState(1);
+  const [showDebugger, setShowDebugger] = useState(false);
 
   const groupedData = useMemo(() => {
     // Tokenizuj svaku transakciju
@@ -224,7 +226,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
   return (
     <div className="space-y-4">
       {/* Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="bg-slate-800/50 border border-slate-700/30 rounded-xl p-4">
           <p className="text-xs text-slate-500 mb-1">Ukupno grupa</p>
           <p className="text-2xl font-bold text-white">{totalGroups}</p>
@@ -237,7 +239,22 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
           <p className="text-xs text-slate-500 mb-1">Ukupan iznos</p>
           <p className="text-2xl font-bold text-white">{formatCurrency(totalAmount, currency)}</p>
         </div>
+        <button
+          onClick={() => setShowDebugger(true)}
+          className="bg-amber-600/20 border border-amber-600/30 rounded-xl p-4 hover:bg-amber-600/30 transition-colors flex flex-col items-center justify-center"
+        >
+          <Bug size={24} className="text-amber-400 mb-1" />
+          <p className="text-xs text-amber-400 font-medium">Debug grupisanja</p>
+        </button>
       </div>
+
+      {/* Debugger */}
+      {showDebugger && (
+        <GroupingDebugger
+          transactions={transactions}
+          onClose={() => setShowDebugger(false)}
+        />
+      )}
 
       {/* Controls */}
       <div className="flex flex-col gap-3">
