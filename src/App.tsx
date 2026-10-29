@@ -1,283 +1,310 @@
-import { useState, useCallback } from 'react';
-import { FileText, BarChart3, Table, Database, Sparkles, Info, Download } from 'lucide-react';
-import PDFUploader from './components/PDFUploader';
-import SummaryCards from './components/SummaryCards';
-import TransactionTable from './components/TransactionTable';
-import Charts from './components/Charts';
-import { extractTextFromPDF } from './utils/pdfParser';
-import { parseTransactions, calculateSummary } from './utils/transactionParser';
-import { Transaction } from './types';
+import { useState } from 'react';
+import { FileUpload } from './components/FileUpload';
+import { StatementsList } from './components/StatementsList';
+import { AggregatedDashboard } from './components/AggregatedDashboard';
+import { ChronologicalTransactions } from './components/ChronologicalTransactions';
+import { AggregatedCharts } from './components/AggregatedCharts';
+import { StatementDetail } from './components/StatementDetail';
+import { ExportPanel } from './components/ExportPanel';
+import { FileInfo } from './components/FileInfo';
+import { ParserDebugView } from './components/ParserDebugView';
+import { parseBankStatement } from './utils/BankStatementParser';
+import type { BankStatement } from './types/BankStatement';
+import type { PageData, PDFMetadata } from './types/App.types';
+import * as pdfjsLib from 'pdfjs-dist';
 
-type TabType = 'overview' | 'transactions' | 'charts';
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+  'pdfjs-dist/build/pdf.worker.min.mjs',
+  import.meta.url
+).toString();
 
 export default function App() {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [statements, setStatements] = useState<BankStatement[]>([]);
+  const [selectedStatementId, setSelectedStatementId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'charts' | 'statements' | 'detail' | 'export' | 'info'>('dashboard');
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<TabType>('overview');
-  const [fileName, setFileName] = useState<string>('');
-  const [hasData, setHasData] = useState(false);
+  const [showParserDebug, setShowParserDebug] = useState(false);
 
-  const handleFileSelect = useCallback(async (file: File) => {
-    setIsLoading(true);
+  const selectedStatement = statements.find(s => s.id === selectedStatementId);
+
+  const handleFilesSelect = async (files: File[]) => {
+    setLoading(true);
     setError(null);
-    setFileName(file.name);
 
-    try {
-      const text = await extractTextFromPDF(file);
-      const parsed = parseTransactions(text);
-      
-      if (parsed.length === 0) {
-        setError('Nisu pronađene transakcije u ovom PDF-u. Aplikacija pokušava da prepoznata datume, opise i iznose. Možda format bankovnog izvoda nije podržan.');
+    const existingFileNames = new Set(statements.map(s => s.fileName));
+    const newStatements: BankStatement[] = [];
+
+    for (const file of files) {
+      if (existingFileNames.has(file.name)) {
+        continue;
       }
-      
-      setTransactions(parsed);
-      setHasData(true);
-    } catch (err) {
-      console.error('Error processing PDF:', err);
-      setError('Greška pri čitanju PDF fajla. Molimo pokušajte ponovo ili koristite drugi PDF.');
-    } finally {
-      setIsLoading(false);
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const numPages = pdf.numPages;
+        const pages: PageData[] = [];
+
+        for (let i = 1; i <= numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent();
+          const items = textContent.items
+            .filter((item: any) => 'str' in item)
+            .map((item: any) => ({
+              text: item.str,
+              x: item.transform[4],
+              y: item.transform[5],
+              width: item.width,
+              height: item.height,
+              fontName: item.fontName,
+            }));
+          
+          const text = items.map((item: any) => item.text).join(' ');
+          pages.push({ pageNumber: i, text, items });
+        }
+
+        const metadata = await pdf.getMetadata().catch(() => null);
+        const info = metadata?.info as any;
+        
+        const pdfMetadata: PDFMetadata = {
+          title: info?.Title || file.name,
+          author: info?.Author || 'Nepoznato',
+          subject: info?.Subject || 'Nepoznato',
+          creator: info?.Creator || 'Nepoznato',
+          producer: info?.Producer || 'Nepoznato',
+          pageCount: numPages,
+          fileSize: `${(file.size / 1024).toFixed(1)} KB`,
+          fileName: file.name,
+        };
+
+        const summary = parseBankStatement(pages, file.name);
+
+        newStatements.push({
+          id: `stmt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          fileName: file.name,
+          uploadDate: new Date(),
+          metadata: pdfMetadata,
+          summary,
+          pages,
+        });
+
+        existingFileNames.add(file.name);
+      } catch (err) {
+        console.error(`Greška pri obradi ${file.name}:`, err);
+      }
     }
-  }, []);
 
-  const loadDemoData = useCallback(() => {
-    const demoTransactions: Transaction[] = [
-      { id: '1', date: '01.01.2024', description: 'Plata - January', amount: 120000, type: 'income', category: 'Plata' },
-      { id: '2', date: '03.01.2024', description: 'Maxi supermarket', amount: 5430, type: 'expense', category: 'Hrana i piće' },
-      { id: '3', date: '05.01.2024', description: 'Stanarina - Rent', amount: 45000, type: 'expense', category: 'Stanovanje' },
-      { id: '4', date: '07.01.2024', description: 'Uber ride', amount: 890, type: 'expense', category: 'Transport' },
-      { id: '5', date: '08.01.2024', description: 'Netflix pretplata', amount: 1290, type: 'expense', category: 'Zabava' },
-      { id: '6', date: '10.01.2024', description: 'Apoteka Benu', amount: 2340, type: 'expense', category: 'Zdravlje' },
-      { id: '7', date: '12.01.2024', description: 'MTS internet', amount: 2990, type: 'expense', category: 'Stanovanje' },
-      { id: '8', date: '14.01.2024', description: 'Shell gorivo', amount: 6500, type: 'expense', category: 'Transport' },
-      { id: '9', date: '15.01.2024', description: 'Restaurant Italia', amount: 3200, type: 'expense', category: 'Hrana i piće' },
-      { id: '10', date: '17.01.2024', description: 'Gym - Teretana', amount: 4500, type: 'expense', category: 'Zabava' },
-      { id: '11', date: '19.01.2024', description: 'Idea Market', amount: 3870, type: 'expense', category: 'Hrana i piće' },
-      { id: '12', date: '20.01.2024', description: 'Parking centar', amount: 450, type: 'expense', category: 'Transport' },
-      { id: '13', date: '22.01.2024', description: 'Struja - EPS', amount: 7800, type: 'expense', category: 'Stanovanje' },
-      { id: '25', date: '25.01.2024', description: 'Kurs - English language', amount: 12000, type: 'expense', category: 'Obrazovanje' },
-      { id: '14', date: '28.01.2024', description: 'Freelance uplata', amount: 35000, type: 'income', category: 'Plata' },
-      { id: '15', date: '01.02.2024', description: 'Plata - February', amount: 120000, type: 'income', category: 'Plata' },
-      { id: '16', date: '03.02.2024', description: 'Maxi supermarket', amount: 6120, type: 'expense', category: 'Hrana i piće' },
-      { id: '17', date: '05.02.2024', description: 'Stanarina - Rent', amount: 45000, type: 'expense', category: 'Stanovanje' },
-      { id: '18', date: '08.02.2024', description: 'Spotify Premium', amount: 599, type: 'expense', category: 'Zabava' },
-      { id: '19', date: '10.02.2024', description: 'Bolt taxi', amount: 750, type: 'expense', category: 'Transport' },
-      { id: '20', date: '12.02.2024', description: 'DM Shop', amount: 2890, type: 'expense', category: 'Hrana i piće' },
-      { id: '21', date: '15.02.2024', description: 'Osiguranje polisa', amount: 8500, type: 'expense', category: 'Osiguranje' },
-      { id: '22', date: '18.02.2024', description: 'Bioskop - Cineplexx', amount: 1200, type: 'expense', category: 'Zabava' },
-      { id: '23', date: '20.02.2024', description: 'OMV gorivo', amount: 7200, type: 'expense', category: 'Transport' },
-      { id: '24', date: '25.02.2024', description: 'Voda - Beogradski vodovod', amount: 2100, type: 'expense', category: 'Stanovanje' },
-    ];
+    if (newStatements.length > 0) {
+      setStatements(prev => [...prev, ...newStatements].sort((a, b) => {
+        const parseDate = (dateStr: string): Date => {
+          if (!dateStr) return new Date('1900-01-01');
+          const parts = dateStr.split('.');
+          if (parts.length !== 3) return new Date('1900-01-01');
+          const [day, month, year] = parts.map(p => parseInt(p));
+          return new Date(year, month - 1, day);
+        };
+        
+        const dateA = parseDate(a.summary.periodStart);
+        const dateB = parseDate(b.summary.periodStart);
+        return dateA.getTime() - dateB.getTime();
+      }));
+    }
 
-    setTransactions(demoTransactions);
-    setHasData(true);
-    setFileName('demo_izvod.pdf');
-    setError(null);
-  }, []);
+    setLoading(false);
+  };
 
-  const { totalIncome, totalExpenses, netBalance } = calculateSummary(transactions);
+  const handleRemoveStatement = (id: string) => {
+    setStatements(prev => prev.filter(s => s.id !== id));
+    if (selectedStatementId === id) {
+      setSelectedStatementId(null);
+      setActiveTab('dashboard');
+    }
+  };
 
-  const exportCSV = useCallback(() => {
-    const headers = ['Datum', 'Opis', 'Kategorija', 'Tip', 'Iznos (RSD)'];
-    const rows = transactions.map(t => [
-      t.date,
-      `"${t.description}"`,
-      t.category,
-      t.type === 'income' ? 'Prihod' : 'Rashod',
-      t.amount.toFixed(2),
-    ]);
-    
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'bankovni_izvod_analiza.csv';
-    link.click();
-    URL.revokeObjectURL(url);
-  }, [transactions]);
+  const handleSelectStatement = (id: string) => {
+    setSelectedStatementId(id);
+    setActiveTab('detail');
+  };
 
-  const tabs: { id: TabType; label: string; icon: any }[] = [
-    { id: 'overview', label: 'Pregled', icon: BarChart3 },
-    { id: 'transactions', label: 'Transakcije', icon: Table },
-    { id: 'charts', label: 'Grafikoni', icon: Database },
-  ];
+  const handleReset = () => {
+    setStatements([]);
+    setSelectedStatementId(null);
+    setActiveTab('dashboard');
+  };
+
+  const allTransactions = statements.flatMap(s => 
+    s.summary.transactions.map(t => ({
+      ...t,
+      statementFileName: s.fileName,
+      statementId: s.id,
+    }))
+  );
+
+  const aggregatedSummary = {
+    transactions: allTransactions,
+    totalIncome: statements.reduce((sum, s) => sum + s.summary.totalIncome, 0),
+    totalExpense: statements.reduce((sum, s) => sum + s.summary.totalExpense, 0),
+    netChange: statements.reduce((sum, s) => sum + s.summary.netChange, 0),
+    openingBalance: statements.length > 0 ? statements[0].summary.openingBalance : 0,
+    closingBalance: statements.length > 0 ? statements[statements.length - 1].summary.closingBalance : 0,
+    currency: 'EUR',
+    periodStart: statements.length > 0 ? statements[0].summary.periodStart : '',
+    periodEnd: statements.length > 0 ? statements[statements.length - 1].summary.periodEnd : '',
+    transactionCount: allTransactions.length,
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      {/* Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-xl shadow-lg shadow-blue-200">
-                <FileText className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">BankAnalyzer</h1>
-                <p className="text-xs text-gray-500">Analiza bankovnih izvoda</p>
-              </div>
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+      <header className="border-b border-slate-700/50 bg-slate-900/50 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
             </div>
-            
-            {hasData && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={exportCSV}
-                  className="flex items-center gap-2 px-4 py-2 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
-                >
-                  <Download className="w-4 h-4" />
-                  <span className="hidden sm:inline">Izvezi CSV</span>
-                </button>
-                <button
-                  onClick={loadDemoData}
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl text-sm font-medium text-white hover:from-blue-700 hover:to-indigo-700 transition-all shadow-sm shadow-blue-200"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  <span className="hidden sm:inline">Demo podaci</span>
-                </button>
-              </div>
-            )}
+            <div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                Bankovni Izvodi - Analiza
+              </h1>
+              <p className="text-xs text-slate-400">
+                {statements.length > 0 
+                  ? `${statements.length} ${statements.length === 1 ? 'izvod' : 'izvoda'} • ${allTransactions.length} transakcija`
+                  : 'Praćenje finansijskog stanja iz PDF bankovnih izvoda'}
+              </p>
+            </div>
           </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8">
-        {/* Upload Section */}
-        <div className="mb-8">
-          <div className="flex items-center gap-2 mb-4">
-            <h2 className="text-lg font-semibold text-gray-800">
-              {!hasData ? 'Učitaj bankovni izvod' : 'Učitaj novi izvod'}
-            </h2>
-            {fileName && (
-              <span className="text-sm text-gray-500 bg-gray-100 px-3 py-1 rounded-full">
-                {fileName}
-              </span>
-            )}
-          </div>
-          <PDFUploader onFileSelect={handleFileSelect} isLoading={isLoading} />
-          
-          {!hasData && !isLoading && (
-            <div className="mt-4 flex items-center justify-center">
+          {statements.length > 0 && (
+            <div className="flex items-center gap-2">
               <button
-                onClick={loadDemoData}
-                className="flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-blue-300 transition-all shadow-sm"
+                onClick={() => document.getElementById('file-input')?.click()}
+                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-colors text-sm flex items-center gap-2"
               >
-                <Sparkles className="w-4 h-4 text-blue-500" />
-                Učitaj demo podatke za pregled
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+                Dodaj izvod
               </button>
+              <button
+                onClick={() => setShowParserDebug(true)}
+                className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 transition-colors text-sm flex items-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Parser Debug
+              </button>
+              <button
+                onClick={handleReset}
+                className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-sm"
+              >
+                Obriši sve
+              </button>
+              <input
+                id="file-input"
+                type="file"
+                accept=".pdf"
+                multiple
+                onChange={(e) => {
+                  if (e.target.files) {
+                    handleFilesSelect(Array.from(e.target.files));
+                    e.target.value = '';
+                  }
+                }}
+                className="hidden"
+              />
             </div>
           )}
         </div>
+      </header>
 
-        {/* Error Message */}
-        {error && (
-          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-start gap-3">
-            <Info className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-amber-800">Napomena</p>
-              <p className="text-sm text-amber-700 mt-1">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Results */}
-        {hasData && transactions.length > 0 && (
-          <>
-            {/* Tabs */}
-            <div className="flex gap-1 mb-6 bg-gray-100 rounded-xl p-1 w-fit">
-              {tabs.map(tab => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all
-                      ${activeTab === tab.id
-                        ? 'bg-white text-gray-900 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-800'
-                      }
-                    `}
-                  >
-                    <Icon className="w-4 h-4" />
-                    {tab.label}
-                  </button>
-                );
-              })}
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        {statements.length === 0 ? (
+          <FileUpload onFilesSelect={handleFilesSelect} loading={loading} />
+        ) : (
+          <div className="space-y-6">
+            <div className="flex flex-wrap gap-2 border-b border-slate-700/50 pb-2">
+              {[
+                { id: 'dashboard', label: 'Pregled' },
+                { id: 'transactions', label: 'Sve stavke (hronološki)' },
+                { id: 'charts', label: 'Grafici' },
+                { id: 'statements', label: 'Izvodi' },
+                ...(selectedStatement ? [{ id: 'detail', label: 'Detalji izvoda' }] : []),
+                { id: 'export', label: 'Export' },
+                ...(selectedStatement ? [{ id: 'info', label: 'Info' }] : []),
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === tab.id
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-800/50 text-slate-400 hover:text-white hover:bg-slate-700/50'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
 
-            {/* Tab Content */}
-            {activeTab === 'overview' && (
-              <div className="space-y-6">
-                <SummaryCards
-                  totalIncome={totalIncome}
-                  totalExpenses={totalExpenses}
-                  netBalance={netBalance}
-                  transactionCount={transactions.length}
+            <div className="min-h-[500px]">
+              {activeTab === 'dashboard' && (
+                <AggregatedDashboard summary={aggregatedSummary} statements={statements} />
+              )}
+              {activeTab === 'transactions' && (
+                <ChronologicalTransactions
+                  transactions={allTransactions}
+                  currency="EUR"
+                  statements={statements}
                 />
-                <Charts transactions={transactions} />
-              </div>
-            )}
-
-            {activeTab === 'transactions' && (
-              <TransactionTable transactions={transactions} />
-            )}
-
-            {activeTab === 'charts' && (
-              <Charts transactions={transactions} />
-            )}
-          </>
-        )}
-
-        {/* Empty State */}
-        {!hasData && !isLoading && (
-          <div className="mt-12 text-center">
-            <div className="max-w-md mx-auto">
-              <div className="w-20 h-20 bg-gradient-to-br from-blue-100 to-indigo-100 rounded-2xl flex items-center justify-center mx-auto mb-6">
-                <FileText className="w-10 h-10 text-blue-600" />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">
-                Analizirajte vaše bankovne izvode
-              </h3>
-              <p className="text-gray-500 mb-6">
-                Uploadujte PDF bankovnog izvoda i aplikacija će automatski prepoznati i kategorizovati sve transakcije.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-left">
-                <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-                  <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center mb-2">
-                    <span className="text-blue-600 font-bold text-sm">1</span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-700">Upload PDF</p>
-                  <p className="text-xs text-gray-500 mt-1">Prevucite ili izaberite PDF fajl</p>
-                </div>
-                <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-                  <div className="w-8 h-8 bg-green-100 rounded-lg flex items-center justify-center mb-2">
-                    <span className="text-green-600 font-bold text-sm">2</span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-700">Automatska analiza</p>
-                  <p className="text-xs text-gray-500 mt-1">AI prepoznavanje transakcija</p>
-                </div>
-                <div className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
-                  <div className="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center mb-2">
-                    <span className="text-purple-600 font-bold text-sm">3</span>
-                  </div>
-                  <p className="text-sm font-medium text-gray-700">Pregled rezultata</p>
-                  <p className="text-xs text-gray-500 mt-1">Tabele, grafikoni i statistika</p>
-                </div>
-              </div>
+              )}
+              {activeTab === 'charts' && (
+                <AggregatedCharts summary={aggregatedSummary} />
+              )}
+              {activeTab === 'statements' && (
+                <StatementsList
+                  statements={statements}
+                  onSelect={handleSelectStatement}
+                  onRemove={handleRemoveStatement}
+                />
+              )}
+              {activeTab === 'detail' && selectedStatement && (
+                <StatementDetail statement={selectedStatement} />
+              )}
+              {activeTab === 'export' && (
+                <ExportPanel statements={statements} aggregatedSummary={aggregatedSummary} />
+              )}
+              {activeTab === 'info' && selectedStatement && (
+                <FileInfo metadata={selectedStatement.metadata} expanded />
+              )}
             </div>
           </div>
+        )}
+
+        {error && (
+          <div className="mt-4 p-4 bg-red-900/30 border border-red-700/50 rounded-xl text-red-300">
+            {error}
+          </div>
+        )}
+
+        {loading && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+            <div className="bg-slate-800 border border-slate-700 rounded-2xl p-8 flex flex-col items-center gap-4">
+              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              <p className="text-lg font-medium">Obrada PDF fajlova...</p>
+              <p className="text-sm text-slate-400">Ekstrakcija transakcija iz bankovnih izvoda</p>
+            </div>
+          </div>
+        )}
+
+        {showParserDebug && (
+          <ParserDebugView 
+            statements={statements} 
+            onClose={() => setShowParserDebug(false)} 
+          />
         )}
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-gray-200 bg-white/50 mt-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4">
-          <p className="text-center text-xs text-gray-400">
-            BankAnalyzer — Alat za analizu bankovnih izvoda iz PDF dokumenata. Svi podaci se obrađuju lokalno u vašem pretraživaču.
-          </p>
-        </div>
-      </footer>
     </div>
   );
 }
