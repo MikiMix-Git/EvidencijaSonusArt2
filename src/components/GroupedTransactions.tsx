@@ -8,7 +8,7 @@ interface GroupedTransactionsProps {
 }
 
 interface TransactionGroup {
-  keywords: string[];
+  commonPhrase: string;
   transactions: Transaction[];
   totalAmount: number;
   totalDebit: number;
@@ -19,47 +19,43 @@ interface TransactionGroup {
   lastDate: string;
 }
 
-// Stop words koje ne nose značenje
-const STOP_WORDS = new Set([
-  'i', 'u', 'na', 'se', 'za', 'sa', 'po', 'od', 'do', 'the', 'a', 'an', 'of', 'to', 'in', 'is', 'it',
-  'that', 'this', 'was', 'are', 'be', 'has', 'had', 'have', 'but', 'or', 'and', 'not', 'you', 'all',
-  'can', 'had', 'her', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may',
-  'new', 'now', 'old', 'see', 'way', 'who', 'boy', 'did', 'let', 'say', 'she', 'too', 'use', 'br',
-  'nr', 'ref', 'id', 'no', 'datum', 'iznos', 'opis', 'stavka', 'transakcija', 'nalog', 'uplata',
-  'isplata', 'promet', 'saldo'
-]);
-
-function extractKeywords(description: string): string[] {
-  // Normalizuj i tokenizuj
-  const normalized = description
+// Tokenizuj opis u reči
+function tokenize(text: string): string[] {
+  return text
     .toLowerCase()
-    .replace(/[^\w\s]/g, ' ') // Zameni specijalne karaktere sa razmakom
-    .replace(/\s+/g, ' ') // Višestruki razmaci u jedan
-    .trim();
-  
-  // Podeli u reči i filtriraj
-  const words = normalized.split(' ')
-    .filter(word => {
-      // Ukloni prekratke reči, brojeve i stop words
-      if (word.length < 3) return false;
-      if (/^\d+$/.test(word)) return false; // Samo brojevi
-      if (STOP_WORDS.has(word)) return false;
-      return true;
-    });
-  
-  // Vrati jedinstvene ključne reči
-  return Array.from(new Set(words));
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(w => w.length > 0);
 }
 
-function calculateSimilarity(keywords1: string[], keywords2: string[]): number {
-  // Jaccard sličnost
-  const set1 = new Set(keywords1);
-  const set2 = new Set(keywords2);
+// Nađi najduži zajednički substring reči između dva niza
+function findLongestCommonSubsequence(words1: string[], words2: string[]): string[] {
+  let longest: string[] = [];
   
-  const intersection = new Set([...set1].filter(x => set2.has(x)));
-  const union = new Set([...set1, ...set2]);
+  // Probaj sve moguće podnizove iz words1
+  for (let i = 0; i < words1.length; i++) {
+    for (let len = 1; len <= words1.length - i; len++) {
+      const subseq = words1.slice(i, i + len);
+      
+      // Proveri da li ovaj podniz postoji u words2 (uzastopno)
+      let found = false;
+      for (let j = 0; j <= words2.length - len; j++) {
+        const candidate = words2.slice(j, j + len);
+        if (JSON.stringify(subseq) === JSON.stringify(candidate)) {
+          found = true;
+          break;
+        }
+      }
+      
+      if (found && subseq.length > longest.length) {
+        longest = subseq;
+      }
+    }
+  }
   
-  return union.size === 0 ? 0 : intersection.size / union.size;
+  return longest;
 }
 
 export function GroupedTransactions({ transactions, currency }: GroupedTransactionsProps) {
@@ -67,27 +63,31 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
   const [sortBy, setSortBy] = useState<'total' | 'count' | 'avg'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
-  const [similarityThreshold, setSimilarityThreshold] = useState(0.5);
+  const [minWords, setMinWords] = useState(1);
 
   const groupedData = useMemo(() => {
-    // Ekstraktuj ključne reči za svaku transakciju
-    const transactionsWithKeywords = transactions.map(t => ({
+    // Tokenizuj svaku transakciju
+    const transactionsWithWords = transactions.map(t => ({
       ...t,
-      keywords: extractKeywords(t.description),
+      words: tokenize(t.description),
     }));
 
-    // Grupiši po sličnosti
     const groups: TransactionGroup[] = [];
 
-    transactionsWithKeywords.forEach((t) => {
+    transactionsWithWords.forEach((t) => {
       let bestMatch = -1;
-      let bestSimilarity = 0;
+      let bestCommonPhrase: string[] = [];
 
-      // Pronađi najbolju postojeću grupu
+      // Pronađi najbolju postojeću grupu (najduži zajednički niz reči)
       groups.forEach((group, idx) => {
-        const similarity = calculateSimilarity(t.keywords, group.keywords);
-        if (similarity > bestSimilarity && similarity >= similarityThreshold) {
-          bestSimilarity = similarity;
+        // Uzmi prvu transakciju iz grupe kao reprezentanta
+        const representative = group.transactions[0];
+        const repWords = tokenize(representative.description);
+        
+        const commonWords = findLongestCommonSubsequence(t.words, repWords);
+        
+        if (commonWords.length > bestCommonPhrase.length && commonWords.length >= minWords) {
+          bestCommonPhrase = commonWords;
           bestMatch = idx;
         }
       });
@@ -100,10 +100,6 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
         group.totalCredit += t.credit;
         group.totalAmount += Math.max(t.debit, t.credit);
         group.count += 1;
-
-        // Ažuriraj ključne reči (unija)
-        const allKeywords = new Set([...group.keywords, ...t.keywords]);
-        group.keywords = Array.from(allKeywords);
 
         // Ažuriraj datume
         const [dA, mA, yA] = t.date.split('.').map(Number);
@@ -120,7 +116,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
       } else {
         // Kreiraj novu grupu
         groups.push({
-          keywords: [...t.keywords],
+          commonPhrase: t.words.join(' '),
           transactions: [t],
           totalAmount: Math.max(t.debit, t.credit),
           totalDebit: t.debit,
@@ -133,13 +129,35 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
       }
     });
 
-    // Izračunaj proseke
+    // Ažuriraj commonPhrase za svaku grupu (nađi stvarni najduži zajednički niz)
     groups.forEach((group) => {
+      if (group.transactions.length > 1) {
+        let longestCommon: string[] = [];
+        
+        // Poredi sve parove transakcija u grupi
+        for (let i = 0; i < group.transactions.length; i++) {
+          for (let j = i + 1; j < group.transactions.length; j++) {
+            const words1 = tokenize(group.transactions[i].description);
+            const words2 = tokenize(group.transactions[j].description);
+            const common = findLongestCommonSubsequence(words1, words2);
+            
+            if (common.length > longestCommon.length) {
+              longestCommon = common;
+            }
+          }
+        }
+        
+        if (longestCommon.length > 0) {
+          group.commonPhrase = longestCommon.join(' ');
+        }
+      }
+      
+      // Izračunaj prosek
       group.avgAmount = group.totalAmount / group.count;
     });
 
     return groups;
-  }, [transactions, similarityThreshold]);
+  }, [transactions, minWords]);
 
   const filteredAndSorted = useMemo(() => {
     let result = groupedData;
@@ -147,7 +165,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     // Filter
     if (searchTerm) {
       result = result.filter((g) =>
-        g.keywords.some(kw => kw.toLowerCase().includes(searchTerm.toLowerCase()))
+        g.commonPhrase.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
@@ -228,24 +246,24 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
             {sortOrder === 'desc' ? '↓ Opadajuće' : '↑ Rastuće'}
           </button>
         </div>
-        {/* Similarity Threshold */}
+        {/* Minimum Words */}
         <div className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-3">
           <div className="flex items-center justify-between mb-2">
-            <label className="text-sm text-slate-300">Prag sličnosti</label>
-            <span className="text-sm font-mono text-blue-400">{(similarityThreshold * 100).toFixed(0)}%</span>
+            <label className="text-sm text-slate-300">Minimalan broj zajedničkih reči</label>
+            <span className="text-sm font-mono text-blue-400">{minWords}</span>
           </div>
           <input
             type="range"
-            min="0.1"
-            max="1.0"
-            step="0.1"
-            value={similarityThreshold}
-            onChange={(e) => setSimilarityThreshold(parseFloat(e.target.value))}
+            min="1"
+            max="5"
+            step="1"
+            value={minWords}
+            onChange={(e) => setMinWords(parseInt(e.target.value))}
             className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
           />
           <div className="flex justify-between text-xs text-slate-500 mt-1">
-            <span>Labavo grupisanje</span>
-            <span>Strogo grupisanje</span>
+            <span>1 reč (šire grupe)</span>
+            <span>5 reči (uže grupe)</span>
           </div>
         </div>
       </div>
@@ -265,7 +283,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
           filteredAndSorted.map((group, idx) => {
             const isExpanded = expandedGroups.has(idx);
             const isExpense = group.totalDebit > group.totalCredit;
-            const displayKeywords = group.keywords.slice(0, 5); // Prikaži max 5 ključnih reči
+            const commonWords = group.commonPhrase.split(' ');
 
             return (
               <div
@@ -289,18 +307,14 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
                     </div>
                     <div className="min-w-0 flex-1 text-left">
                       <div className="flex flex-wrap gap-1 mb-1">
-                        {displayKeywords.map((kw, i) => (
+                        {commonWords.map((word, i) => (
                           <span
                             key={i}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-xs"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-xs font-medium"
                           >
-                            <Tag size={8} />
-                            {kw}
+                            {word}
                           </span>
                         ))}
-                        {group.keywords.length > 5 && (
-                          <span className="text-xs text-slate-500">+{group.keywords.length - 5}</span>
-                        )}
                       </div>
                       <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
                         <span className="flex items-center gap-1">
@@ -349,6 +363,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
                         <thead className="bg-slate-900/50">
                           <tr>
                             <th className="text-left p-3 text-slate-400 font-medium">Datum</th>
+                            <th className="text-left p-3 text-slate-400 font-medium">Opis</th>
                             <th className="text-right p-3 text-green-400 font-medium">Ulaz</th>
                             <th className="text-right p-3 text-red-400 font-medium">Izlaz</th>
                             <th className="text-right p-3 text-slate-400 font-medium">Saldo</th>
@@ -366,6 +381,9 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
                             .map((t, i) => (
                               <tr key={i} className="border-t border-slate-700/20">
                                 <td className="p-3 text-slate-300 whitespace-nowrap">{t.date}</td>
+                                <td className="p-3 text-slate-400 max-w-xs truncate" title={t.description}>
+                                  {t.description}
+                                </td>
                                 <td className="p-3 text-right font-mono whitespace-nowrap">
                                   {t.credit > 0 ? (
                                     <span className="text-green-400">+{formatCurrency(t.credit, currency)}</span>
