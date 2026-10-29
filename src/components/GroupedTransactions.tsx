@@ -31,6 +31,19 @@ function tokenize(text: string): string[] {
     .filter(w => w.length > 0);
 }
 
+// Reči koje ne nose značenje za grupisanje
+const STOP_WORDS = new Set([
+  'eur', 'ref', 'bam', 'usd', 'rsd', 'hrk',
+  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
+  '00', '01', '02', '03', '04', '05', '06', '07', '08', '09',
+  'td', 'do', 'oo', 'd', 'o', 'n', 'za', 'na', 'u', 'i', 'se',
+  'the', 'a', 'an', 'of', 'to', 'in', 'is', 'it', 'and', 'or'
+]);
+
+function filterStopWords(words: string[]): string[] {
+  return words.filter(w => !STOP_WORDS.has(w));
+}
+
 // Nađi najduži zajednički substring reči između dva niza
 function findLongestCommonSubsequence(words1: string[], words2: string[]): string[] {
   let longest: string[] = [];
@@ -64,14 +77,15 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
   const [sortBy, setSortBy] = useState<'total' | 'count' | 'avg'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
-  const [minWords, setMinWords] = useState(1);
+  const [minWords, setMinWords] = useState(2);
   const [showDebugger, setShowDebugger] = useState(false);
+  const [ignoreStopWords, setIgnoreStopWords] = useState(true);
 
   const groupedData = useMemo(() => {
     // Tokenizuj svaku transakciju
     const transactionsWithWords = transactions.map(t => ({
       ...t,
-      words: tokenize(t.description),
+      words: ignoreStopWords ? filterStopWords(tokenize(t.description)) : tokenize(t.description),
     }));
 
     const groups: TransactionGroup[] = [];
@@ -87,7 +101,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
         let shortestCommon: string[] = t.words; // Počni sa svim rečima
 
         for (const existingT of group.transactions) {
-          const existingWords = tokenize(existingT.description);
+          const existingWords = ignoreStopWords ? filterStopWords(tokenize(existingT.description)) : tokenize(existingT.description);
           const commonWords = findLongestCommonSubsequence(t.words, existingWords);
           
           if (commonWords.length < minWords) {
@@ -148,31 +162,26 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     groups.forEach((group) => {
       if (group.transactions.length > 1) {
         // Nađi najduži zajednički niz koji je zajednički za SVE transakcije u grupi
-        let commonToAll: string[] | null = null;
+        // Koristimo prvu transakciju kao referencu
+        const firstWords = ignoreStopWords ? filterStopWords(tokenize(group.transactions[0].description)) : tokenize(group.transactions[0].description);
+        let commonToAll = firstWords; // Počni sa svim rečima prve transakcije
         
-        for (let i = 0; i < group.transactions.length; i++) {
-          const words1 = tokenize(group.transactions[i].description);
+        // Poredi sa svakom sledećom transakcijom
+        for (let i = 1; i < group.transactions.length; i++) {
+          const currentWords = ignoreStopWords ? filterStopWords(tokenize(group.transactions[i].description)) : tokenize(group.transactions[i].description);
+          const common = findLongestCommonSubsequence(commonToAll, currentWords);
           
-          for (let j = i + 1; j < group.transactions.length; j++) {
-            const words2 = tokenize(group.transactions[j].description);
-            const common = findLongestCommonSubsequence(words1, words2);
-            
-            if (commonToAll === null) {
-              commonToAll = common;
-            } else {
-              // Nađi presek između current commonToAll i novog common
-              const intersection = findLongestCommonSubsequence(commonToAll, common);
-              commonToAll = intersection;
-            }
+          // commonToAll postaje presek (najduži zajednički niz)
+          if (common.length < commonToAll.length) {
+            commonToAll = common;
           }
         }
         
-        if (commonToAll && commonToAll.length >= minWords) {
+        if (commonToAll.length >= minWords) {
           group.commonPhrase = commonToAll.join(' ');
         } else {
-          // Ako nema zajedničkog niza za sve, grupu treba razbiti
-          // Ali za sada samo prikaži prvu transakciju kao fallback
-          group.commonPhrase = tokenize(group.transactions[0].description).join(' ');
+          // Ako je zajednički niz kraći od minWords, prikaži šta imamo
+          group.commonPhrase = commonToAll.length > 0 ? commonToAll.join(' ') : '(nema zajedničkog niza)';
         }
       }
       
@@ -181,7 +190,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     });
 
     return groups;
-  }, [transactions, minWords]);
+  }, [transactions, minWords, ignoreStopWords]);
 
   const filteredAndSorted = useMemo(() => {
     let result = groupedData;
@@ -304,6 +313,22 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
             <span>1 reč (šire grupe)</span>
             <span>5 reči (uže grupe)</span>
           </div>
+        </div>
+
+        {/* Ignore Stop Words */}
+        <div className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-3">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={ignoreStopWords}
+              onChange={(e) => setIgnoreStopWords(e.target.checked)}
+              className="w-4 h-4 rounded bg-slate-700 border-slate-600 text-blue-500 focus:ring-blue-500"
+            />
+            <div>
+              <span className="text-sm text-slate-300">Ignoriši česte reči</span>
+              <p className="text-xs text-slate-500">Filtrira: eur, ref, bam, 1, 2, td, do, oo...</p>
+            </div>
+          </label>
         </div>
       </div>
 

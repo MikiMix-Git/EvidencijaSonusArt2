@@ -46,7 +46,7 @@ export function GroupingDebugger({ transactions, onClose }: GroupingDebuggerProp
   const [selectedTransaction, setSelectedTransaction] = useState<number | null>(null);
   const [compareWith, setCompareWith] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [minWords, setMinWords] = useState(1);
+  const [minWords, setMinWords] = useState(2);
 
   const transactionsWithWords = useMemo(() => {
     return transactions.map((t, idx) => ({
