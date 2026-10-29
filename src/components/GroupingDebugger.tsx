@@ -172,6 +172,30 @@ export function GroupingDebugger({ transactions, onClose }: GroupingDebuggerProp
       }
     });
 
+    // Ažuriraj commonPhrase za svaku grupu (nađi stvarni zajednički niz za SVE transakcije)
+    groups.forEach((group) => {
+      if (group.transactions.length > 1) {
+        const firstWords = transactionsWithWords[group.transactions[0]].words;
+        let commonToAll = firstWords;
+        
+        for (let i = 1; i < group.transactions.length; i++) {
+          const currentWords = transactionsWithWords[group.transactions[i]].words;
+          const common = findLongestCommonSubsequence(commonToAll, currentWords);
+          commonToAll = common;
+          
+          if (commonToAll.length < minWords) {
+            break;
+          }
+        }
+        
+        if (commonToAll.length >= minWords) {
+          group.commonPhrase = commonToAll.join(' ');
+        } else {
+          group.commonPhrase = commonToAll.length > 0 ? commonToAll.join(' ') : '(nema zajedničkog niza)';
+        }
+      }
+    });
+
     return { groups, decisions };
   }, [transactionsWithWords, minWords]);
 

@@ -162,25 +162,31 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     groups.forEach((group) => {
       if (group.transactions.length > 1) {
         // Nađi najduži zajednički niz koji je zajednički za SVE transakcije u grupi
-        // Koristimo prvu transakciju kao referencu
+        // Počni sa prvom transakcijom
         const firstWords = ignoreStopWords ? filterStopWords(tokenize(group.transactions[0].description)) : tokenize(group.transactions[0].description);
-        let commonToAll = firstWords; // Počni sa svim rečima prve transakcije
         
-        // Poredi sa svakom sledećom transakcijom
+        // Iterativno smanjuj commonToAll poređenjem sa svakom sledećom transakcijom
+        let commonToAll = firstWords;
+        
         for (let i = 1; i < group.transactions.length; i++) {
           const currentWords = ignoreStopWords ? filterStopWords(tokenize(group.transactions[i].description)) : tokenize(group.transactions[i].description);
+          
+          // Nađi najduži zajednički podniz između current commonToAll i currentWords
           const common = findLongestCommonSubsequence(commonToAll, currentWords);
           
-          // commonToAll postaje presek (najduži zajednički niz)
-          if (common.length < commonToAll.length) {
-            commonToAll = common;
+          // Ažuriraj commonToAll - mora biti zajednički za SVE do sada
+          commonToAll = common;
+          
+          // Ako je commonToAll postao prekratak, zaustavi se
+          if (commonToAll.length < minWords) {
+            break;
           }
         }
         
+        // Postavi commonPhrase
         if (commonToAll.length >= minWords) {
           group.commonPhrase = commonToAll.join(' ');
         } else {
-          // Ako je zajednički niz kraći od minWords, prikaži šta imamo
           group.commonPhrase = commonToAll.length > 0 ? commonToAll.join(' ') : '(nema zajedničkog niza)';
         }
       }
