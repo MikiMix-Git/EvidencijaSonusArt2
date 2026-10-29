@@ -9,6 +9,7 @@ import { ExportPanel } from './components/ExportPanel';
 import { FileInfo } from './components/FileInfo';
 import { ParserDebugView } from './components/ParserDebugView';
 import { GroupedTransactions } from './components/GroupedTransactions';
+import { GroupedByTags } from './components/GroupedByTags';
 import { parseBankStatement } from './utils/BankStatementParser';
 import { 
   saveStatement, 
@@ -32,7 +33,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 export default function App() {
   const [statements, setStatements] = useState<BankStatement[]>([]);
   const [selectedStatementId, setSelectedStatementId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'grouped' | 'charts' | 'statements' | 'detail' | 'export' | 'info'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'grouped' | 'tags' | 'charts' | 'statements' | 'detail' | 'export' | 'info'>('dashboard');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showParserDebug, setShowParserDebug] = useState(false);
@@ -493,6 +494,7 @@ export default function App() {
                   { id: 'dashboard', label: 'Pregled' },
                   { id: 'transactions', label: 'Sve stavke (hronološki)' },
                   { id: 'grouped', label: 'Grupisano po opisu' },
+                  { id: 'tags', label: 'Grupisano po tagovima' },
                   { id: 'charts', label: 'Grafici' },
                   { id: 'statements', label: 'Izvodi' },
                   ...(selectedStatement ? [{ id: 'detail', label: 'Detalji izvoda' }] : []),
@@ -525,6 +527,12 @@ export default function App() {
               )}
               {activeTab === 'grouped' && (
                 <GroupedTransactions
+                  transactions={allTransactions}
+                  currency="EUR"
+                />
+              )}
+              {activeTab === 'tags' && (
+                <GroupedByTags
                   transactions={allTransactions}
                   currency="EUR"
                 />
