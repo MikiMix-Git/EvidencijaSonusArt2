@@ -64,14 +64,15 @@ export function GroupingDebugger({ transactions, onClose }: GroupingDebuggerProp
   const [compareWith, setCompareWith] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [minWords, setMinWords] = useState(2);
+  const [ignoreStopWords, setIgnoreStopWords] = useState(true);
 
   const transactionsWithWords = useMemo(() => {
     return transactions.map((t, idx) => ({
       ...t,
       index: idx,
-      words: tokenize(t.description),
+      words: ignoreStopWords ? filterStopWords(tokenize(t.description)) : tokenize(t.description),
     }));
-  }, [transactions]);
+  }, [transactions, ignoreStopWords]);
 
   const filteredTransactions = useMemo(() => {
     if (!searchTerm) return transactionsWithWords;
@@ -251,6 +252,22 @@ export function GroupingDebugger({ transactions, onClose }: GroupingDebuggerProp
               onChange={(e) => setMinWords(parseInt(e.target.value))}
               className="w-full"
             />
+          </div>
+          <div className="bg-slate-800 p-3 rounded-lg">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={ignoreStopWords}
+                onChange={(e) => setIgnoreStopWords(e.target.checked)}
+                className="w-4 h-4 rounded bg-slate-700 border-slate-600 text-blue-500 focus:ring-blue-500"
+              />
+              <span className="text-sm text-slate-300">
+                Ignoriši česte reči i brojeve
+              </span>
+            </label>
+            <p className="text-xs text-slate-500 mt-1 ml-6">
+              Filtrira: eur, ref, operativni, tecaj, brojeve...
+            </p>
           </div>
         </div>
 
