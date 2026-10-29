@@ -172,6 +172,71 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
       }
     });
 
+    // POST-PROCESSING: Spajanje sličnih grupa
+    // Spoji "male" grupe (1-2 reči) sa "velikim" grupama koje sadrže tu reč kao podniz
+    let merged = true;
+    while (merged) {
+      merged = false;
+      
+      for (let i = 0; i < groups.length; i++) {
+        const groupI = groups[i];
+        const wordsI = groupI.commonPhrase.split(' ');
+        
+        // Ako je grupa "mala" (1-2 reči), pokušaj da je spojiš sa većom
+        if (wordsI.length <= 2) {
+          for (let j = 0; j < groups.length; j++) {
+            if (i === j) continue;
+            
+            const groupJ = groups[j];
+            const wordsJ = groupJ.commonPhrase.split(' ');
+            
+            // Preskoči ako je grupa J takođe mala
+            if (wordsJ.length <= 2) continue;
+            
+            // Proveri da li je commonPhrase grupe I podniz grupe J
+            let isSubsequence = false;
+            for (let start = 0; start <= wordsJ.length - wordsI.length; start++) {
+              const subseq = wordsJ.slice(start, start + wordsI.length);
+              if (JSON.stringify(subseq) === JSON.stringify(wordsI)) {
+                isSubsequence = true;
+                break;
+              }
+            }
+            
+            if (isSubsequence) {
+              // Spoji grupu I u grupu J
+              groupJ.transactions.push(...groupI.transactions);
+              groupJ.totalDebit += groupI.totalDebit;
+              groupJ.totalCredit += groupI.totalCredit;
+              groupJ.totalAmount += groupI.totalAmount;
+              groupJ.count += groupI.count;
+              
+              // Ažuriraj datume
+              const [dFirstI, mFirstI, yFirstI] = groupI.firstDate.split('.').map(Number);
+              const firstDateI = new Date(yFirstI, mFirstI - 1, dFirstI);
+              const [dLastI, mLastI, yLastI] = groupI.lastDate.split('.').map(Number);
+              const lastDateI = new Date(yLastI, mLastI - 1, dLastI);
+              
+              const [dFirstJ, mFirstJ, yFirstJ] = groupJ.firstDate.split('.').map(Number);
+              const firstDateJ = new Date(yFirstJ, mFirstJ - 1, dFirstJ);
+              const [dLastJ, mLastJ, yLastJ] = groupJ.lastDate.split('.').map(Number);
+              const lastDateJ = new Date(yLastJ, mLastJ - 1, dLastJ);
+              
+              if (firstDateI < firstDateJ) groupJ.firstDate = groupI.firstDate;
+              if (lastDateI > lastDateJ) groupJ.lastDate = groupI.lastDate;
+              
+              // Ukloni grupu I
+              groups.splice(i, 1);
+              merged = true;
+              break;
+            }
+          }
+          
+          if (merged) break; // Restartuj loop nakon spajanja
+        }
+      }
+    }
+
     // Ažuriraj commonPhrase za svaku grupu (nađi zajednički niz za SVE transakcije)
     groups.forEach((group) => {
       if (group.transactions.length > 1) {
