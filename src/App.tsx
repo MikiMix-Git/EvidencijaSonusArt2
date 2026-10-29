@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { FileUpload } from './components/FileUpload';
 import { StatementsList } from './components/StatementsList';
 import { AggregatedDashboard } from './components/AggregatedDashboard';
@@ -9,9 +9,19 @@ import { ExportPanel } from './components/ExportPanel';
 import { FileInfo } from './components/FileInfo';
 import { ParserDebugView } from './components/ParserDebugView';
 import { parseBankStatement } from './utils/BankStatementParser';
+import { 
+  saveStatement, 
+  loadAllStatements, 
+  deleteStatement as deleteFromDB, 
+  deleteAllStatements,
+  getDBStats,
+  exportDBAsJSON,
+  importDBFromJSON,
+} from './utils/database';
 import type { BankStatement } from './types/BankStatement';
 import type { PageData, PDFMetadata } from './types/App.types';
 import * as pdfjsLib from 'pdfjs-dist';
+import { Database, Trash2, Download, Upload, HardDrive, Check, AlertTriangle } from 'lucide-react';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -25,8 +35,50 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showParserDebug, setShowParserDebug] = useState(false);
+  
+  // Database state
+  const [dbStats, setDbStats] = useState<{ count: number; estimatedSize: string } | null>(null);
+  const [showDBPanel, setShowDBPanel] = useState(false);
+  const [dbActionLoading, setDbActionLoading] = useState(false);
+  const [dbMessage, setDbMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const selectedStatement = statements.find(s => s.id === selectedStatementId);
+
+  // Učitavanje sačuvanih izvoda iz baze pri startu
+  useEffect(() => {
+    const loadFromDB = async () => {
+      try {
+        const saved = await loadAllStatements();
+        if (saved.length > 0) {
+          setStatements(saved);
+        }
+        const stats = await getDBStats();
+        setDbStats(stats);
+      } catch (err) {
+        console.error('Greška pri učitavanju iz baze:', err);
+      } finally {
+        setInitialLoadDone(true);
+      }
+    };
+    loadFromDB();
+  }, []);
+
+  // Ažuriranje DB statistika
+  const refreshDBStats = async () => {
+    try {
+      const stats = await getDBStats();
+      setDbStats(stats);
+    } catch (err) {
+      console.error('Greška pri čitanju statistika:', err);
+    }
+  };
+
+  const showDBMessage = (type: 'success' | 'error', text: string) => {
+    setDbMessage({ type, text });
+    setTimeout(() => setDbMessage(null), 3000);
+  };
 
   const handleFilesSelect = async (files: File[]) => {
     setLoading(true);
@@ -67,7 +119,7 @@ export default function App() {
         const metadata = await pdf.getMetadata().catch(() => null);
         const info = metadata?.info as any;
         
-        const pdfMetadata: PDFMetadata = {
+        const pdfMeta: PDFMetadata = {
           title: info?.Title || file.name,
           author: info?.Author || 'Nepoznato',
           subject: info?.Subject || 'Nepoznato',
@@ -80,15 +132,19 @@ export default function App() {
 
         const summary = parseBankStatement(pages, file.name);
 
-        newStatements.push({
+        const newStatement: BankStatement = {
           id: `stmt_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           fileName: file.name,
           uploadDate: new Date(),
-          metadata: pdfMetadata,
+          metadata: pdfMeta,
           summary,
           pages,
-        });
+        };
 
+        // Čuvanje u bazu
+        await saveStatement(newStatement);
+
+        newStatements.push(newStatement);
         existingFileNames.add(file.name);
       } catch (err) {
         console.error(`Greška pri obradi ${file.name}:`, err);
@@ -109,17 +165,22 @@ export default function App() {
         const dateB = parseDate(b.summary.periodStart);
         return dateA.getTime() - dateB.getTime();
       }));
+      
+      await refreshDBStats();
     }
 
     setLoading(false);
   };
 
-  const handleRemoveStatement = (id: string) => {
+  const handleRemoveStatement = async (id: string) => {
     setStatements(prev => prev.filter(s => s.id !== id));
     if (selectedStatementId === id) {
       setSelectedStatementId(null);
       setActiveTab('dashboard');
     }
+    // Brisanje iz baze
+    await deleteFromDB(id);
+    await refreshDBStats();
   };
 
   const handleSelectStatement = (id: string) => {
@@ -127,10 +188,77 @@ export default function App() {
     setActiveTab('detail');
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     setStatements([]);
     setSelectedStatementId(null);
     setActiveTab('dashboard');
+  };
+
+  // Brisanje cele baze
+  const handleDeleteAllDB = async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    
+    setDbActionLoading(true);
+    try {
+      await deleteAllStatements();
+      setStatements([]);
+      setSelectedStatementId(null);
+      setActiveTab('dashboard');
+      await refreshDBStats();
+      showDBMessage('success', 'Baza je uspešno obrisana!');
+    } catch (err) {
+      showDBMessage('error', 'Greška pri brisanju baze!');
+    } finally {
+      setDbActionLoading(false);
+      setConfirmDelete(false);
+    }
+  };
+
+  // Export baze
+  const handleExportDB = async () => {
+    setDbActionLoading(true);
+    try {
+      const json = await exportDBAsJSON();
+      const blob = new Blob([json], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bank_statement_db_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showDBMessage('success', 'Baza je izvezena kao JSON fajl!');
+    } catch (err) {
+      showDBMessage('error', 'Greška pri izvozu baze!');
+    } finally {
+      setDbActionLoading(false);
+    }
+  };
+
+  // Import baze
+  const handleImportDB = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setDbActionLoading(true);
+    try {
+      const text = await file.text();
+      const count = await importDBFromJSON(text);
+      // Ponovno učitavanje
+      const loaded = await loadAllStatements();
+      setStatements(loaded);
+      await refreshDBStats();
+      showDBMessage('success', `Uvezeno ${count} izvoda iz baze!`);
+    } catch (err) {
+      showDBMessage('error', 'Greška pri uvozu baze! Provjerite format fajla.');
+    } finally {
+      setDbActionLoading(false);
+      e.target.value = '';
+    }
   };
 
   const allTransactions = statements.flatMap(s => 
@@ -175,53 +303,188 @@ export default function App() {
               </p>
             </div>
           </div>
-          {statements.length > 0 && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => document.getElementById('file-input')?.click()}
-                className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-colors text-sm flex items-center gap-2"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                </svg>
-                Dodaj izvod
-              </button>
-              <button
-                onClick={() => setShowParserDebug(true)}
-                className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 transition-colors text-sm flex items-center gap-2"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-                Parser Debug
-              </button>
-              <button
-                onClick={handleReset}
-                className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-sm"
-              >
-                Obriši sve
-              </button>
-              <input
-                id="file-input"
-                type="file"
-                accept=".pdf"
-                multiple
-                onChange={(e) => {
-                  if (e.target.files) {
-                    handleFilesSelect(Array.from(e.target.files));
-                    e.target.value = '';
-                  }
-                }}
-                className="hidden"
-              />
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {/* DB Status Badge */}
+            {dbStats && dbStats.count > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-xs text-emerald-400">
+                <HardDrive size={12} />
+                <span>{dbStats.count} sačuvano</span>
+                <span className="text-emerald-500/60">({dbStats.estimatedSize})</span>
+              </div>
+            )}
+            
+            {/* DB Management Button */}
+            <button
+              onClick={() => setShowDBPanel(!showDBPanel)}
+              className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-sm flex items-center gap-2"
+              title="Upravljanje bazom podataka"
+            >
+              <Database size={16} />
+              <span className="hidden sm:inline">Baza</span>
+            </button>
+            
+            {statements.length > 0 && (
+              <>
+                <button
+                  onClick={() => document.getElementById('file-input')?.click()}
+                  className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 transition-colors text-sm flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                  </svg>
+                  <span className="hidden sm:inline">Dodaj izvod</span>
+                </button>
+                <button
+                  onClick={() => setShowParserDebug(true)}
+                  className="px-4 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 transition-colors text-sm flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  <span className="hidden sm:inline">Parser Debug</span>
+                </button>
+                <button
+                  onClick={handleReset}
+                  className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors text-sm"
+                >
+                  Obriši sve
+                </button>
+                <input
+                  id="file-input"
+                  type="file"
+                  accept=".pdf"
+                  multiple
+                  onChange={(e) => {
+                    if (e.target.files) {
+                      handleFilesSelect(Array.from(e.target.files));
+                      e.target.value = '';
+                    }
+                  }}
+                  className="hidden"
+                />
+              </>
+            )}
+          </div>
         </div>
       </header>
 
+      {/* DB Management Panel */}
+      {showDBPanel && (
+        <div className="border-b border-slate-700/50 bg-slate-800/50 backdrop-blur-sm">
+          <div className="max-w-7xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                <Database size={16} className="text-blue-400" />
+                Upravljanje bazom podataka
+              </h3>
+              <button onClick={() => { setShowDBPanel(false); setConfirmDelete(false); }} className="text-slate-400 hover:text-white text-sm">
+                Zatvori ✕
+              </button>
+            </div>
+            
+            {/* DB Message */}
+            {dbMessage && (
+              <div className={`mb-3 p-3 rounded-lg flex items-center gap-2 text-sm ${
+                dbMessage.type === 'success' 
+                  ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400' 
+                  : 'bg-red-500/10 border border-red-500/30 text-red-400'
+              }`}>
+                {dbMessage.type === 'success' ? <Check size={16} /> : <AlertTriangle size={16} />}
+                {dbMessage.text}
+              </div>
+            )}
+            
+            {/* DB Stats */}
+            {dbStats && (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                <div className="bg-slate-900/50 rounded-lg p-3">
+                  <p className="text-xs text-slate-500">Sačuvanih izvoda</p>
+                  <p className="text-lg font-bold text-white">{dbStats.count}</p>
+                </div>
+                <div className="bg-slate-900/50 rounded-lg p-3">
+                  <p className="text-xs text-slate-500">Veličina baze</p>
+                  <p className="text-lg font-bold text-white">{dbStats.estimatedSize}</p>
+                </div>
+                <div className="bg-slate-900/50 rounded-lg p-3">
+                  <p className="text-xs text-slate-500">Status</p>
+                  <p className="text-lg font-bold text-emerald-400 flex items-center gap-1">
+                    <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                    Aktivna
+                  </p>
+                </div>
+              </div>
+            )}
+            
+            {/* DB Actions */}
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={handleExportDB}
+                disabled={dbActionLoading || !dbStats || dbStats.count === 0}
+                className="px-4 py-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Download size={16} />
+                Izvezi bazu (JSON)
+              </button>
+              
+              <label className={`px-4 py-2 rounded-lg bg-green-600/20 hover:bg-green-600/30 text-green-400 text-sm font-medium flex items-center gap-2 transition-colors cursor-pointer ${dbActionLoading ? 'opacity-40 pointer-events-none' : ''}`}>
+                <Upload size={16} />
+                Uvezi bazu (JSON)
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleImportDB}
+                  className="hidden"
+                />
+              </label>
+              
+              <button
+                onClick={handleDeleteAllDB}
+                disabled={dbActionLoading || !dbStats || dbStats.count === 0}
+                className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  confirmDelete 
+                    ? 'bg-red-600 hover:bg-red-500 text-white' 
+                    : 'bg-red-600/20 hover:bg-red-600/30 text-red-400'
+                }`}
+              >
+                <Trash2 size={16} />
+                {confirmDelete ? 'Potvrdi brisanje!' : 'Obriši cijelu bazu'}
+              </button>
+              
+              {confirmDelete && (
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-medium transition-colors"
+                >
+                  Otkaži
+                </button>
+              )}
+            </div>
+            
+            {confirmDelete && (
+              <p className="mt-2 text-xs text-red-400 flex items-center gap-1">
+                <AlertTriangle size={12} />
+                Ovo će trajno obrisati sve sačuvane izvode iz baze podataka. Ova akcija se ne može poništiti!
+              </p>
+            )}
+            
+            <p className="mt-3 text-xs text-slate-500">
+              💾 Podaci se čuvaju lokalno u vašem pretraživaču (IndexedDB). Izvodi se automatski čuvaju pri uploadu.
+              Sirovi tekst PDF stranica se ne čuva radi uštede prostora — samo parsirane transakcije i metapodaci.
+            </p>
+          </div>
+        </div>
+      )}
+
       <main className="max-w-7xl mx-auto px-4 py-8">
-        {statements.length === 0 ? (
+        {statements.length === 0 && initialLoadDone ? (
           <FileUpload onFilesSelect={handleFilesSelect} loading={loading} />
+        ) : statements.length === 0 && !initialLoadDone ? (
+          <div className="flex items-center justify-center min-h-[50vh]">
+            <div className="text-center">
+              <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+              <p className="text-slate-400">Učitavanje sačuvanih izvoda...</p>
+            </div>
+          </div>
         ) : (
           <div className="space-y-6">
             <div className="flex flex-wrap gap-2 border-b border-slate-700/50 pb-2">
