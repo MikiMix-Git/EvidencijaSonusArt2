@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Transaction, formatCurrency } from '../utils/BankStatementParser';
-import { Search, Filter, TrendingUp, TrendingDown, Hash } from 'lucide-react';
+import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag } from 'lucide-react';
 
 interface GroupedTransactionsProps {
   transactions: Transaction[];
@@ -8,7 +8,7 @@ interface GroupedTransactionsProps {
 }
 
 interface TransactionGroup {
-  description: string;
+  keywords: string[];
   transactions: Transaction[];
   totalAmount: number;
   totalDebit: number;
@@ -19,50 +19,118 @@ interface TransactionGroup {
   lastDate: string;
 }
 
+// Stop words koje ne nose značenje
+const STOP_WORDS = new Set([
+  'i', 'u', 'na', 'se', 'za', 'sa', 'po', 'od', 'do', 'the', 'a', 'an', 'of', 'to', 'in', 'is', 'it',
+  'that', 'this', 'was', 'are', 'be', 'has', 'had', 'have', 'but', 'or', 'and', 'not', 'you', 'all',
+  'can', 'had', 'her', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may',
+  'new', 'now', 'old', 'see', 'way', 'who', 'boy', 'did', 'let', 'say', 'she', 'too', 'use', 'br',
+  'nr', 'ref', 'id', 'no', 'datum', 'iznos', 'opis', 'stavka', 'transakcija', 'nalog', 'uplata',
+  'isplata', 'promet', 'saldo'
+]);
+
+function extractKeywords(description: string): string[] {
+  // Normalizuj i tokenizuj
+  const normalized = description
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ') // Zameni specijalne karaktere sa razmakom
+    .replace(/\s+/g, ' ') // Višestruki razmaci u jedan
+    .trim();
+  
+  // Podeli u reči i filtriraj
+  const words = normalized.split(' ')
+    .filter(word => {
+      // Ukloni prekratke reči, brojeve i stop words
+      if (word.length < 3) return false;
+      if (/^\d+$/.test(word)) return false; // Samo brojevi
+      if (STOP_WORDS.has(word)) return false;
+      return true;
+    });
+  
+  // Vrati jedinstvene ključne reči
+  return Array.from(new Set(words));
+}
+
+function calculateSimilarity(keywords1: string[], keywords2: string[]): number {
+  // Jaccard sličnost
+  const set1 = new Set(keywords1);
+  const set2 = new Set(keywords2);
+  
+  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const union = new Set([...set1, ...set2]);
+  
+  return union.size === 0 ? 0 : intersection.size / union.size;
+}
+
 export function GroupedTransactions({ transactions, currency }: GroupedTransactionsProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'total' | 'count' | 'avg'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  const [similarityThreshold, setSimilarityThreshold] = useState(0.5);
 
   const groupedData = useMemo(() => {
-    const groups = new Map<string, TransactionGroup>();
+    // Ekstraktuj ključne reči za svaku transakciju
+    const transactionsWithKeywords = transactions.map(t => ({
+      ...t,
+      keywords: extractKeywords(t.description),
+    }));
 
-    transactions.forEach((t) => {
-      const key = t.description.trim();
-      if (!groups.has(key)) {
-        groups.set(key, {
-          description: key,
-          transactions: [],
-          totalAmount: 0,
-          totalDebit: 0,
-          totalCredit: 0,
-          count: 0,
-          avgAmount: 0,
+    // Grupiši po sličnosti
+    const groups: TransactionGroup[] = [];
+
+    transactionsWithKeywords.forEach((t) => {
+      let bestMatch = -1;
+      let bestSimilarity = 0;
+
+      // Pronađi najbolju postojeću grupu
+      groups.forEach((group, idx) => {
+        const similarity = calculateSimilarity(t.keywords, group.keywords);
+        if (similarity > bestSimilarity && similarity >= similarityThreshold) {
+          bestSimilarity = similarity;
+          bestMatch = idx;
+        }
+      });
+
+      if (bestMatch >= 0) {
+        // Dodaj u postojeću grupu
+        const group = groups[bestMatch];
+        group.transactions.push(t);
+        group.totalDebit += t.debit;
+        group.totalCredit += t.credit;
+        group.totalAmount += Math.max(t.debit, t.credit);
+        group.count += 1;
+
+        // Ažuriraj ključne reči (unija)
+        const allKeywords = new Set([...group.keywords, ...t.keywords]);
+        group.keywords = Array.from(allKeywords);
+
+        // Ažuriraj datume
+        const [dA, mA, yA] = t.date.split('.').map(Number);
+        const dateObj = new Date(yA, mA - 1, dA);
+        
+        const [dFirst, mFirst, yFirst] = group.firstDate.split('.').map(Number);
+        const firstDateObj = new Date(yFirst, mFirst - 1, dFirst);
+        
+        const [dLast, mLast, yLast] = group.lastDate.split('.').map(Number);
+        const lastDateObj = new Date(yLast, mLast - 1, dLast);
+
+        if (dateObj < firstDateObj) group.firstDate = t.date;
+        if (dateObj > lastDateObj) group.lastDate = t.date;
+      } else {
+        // Kreiraj novu grupu
+        groups.push({
+          keywords: [...t.keywords],
+          transactions: [t],
+          totalAmount: Math.max(t.debit, t.credit),
+          totalDebit: t.debit,
+          totalCredit: t.credit,
+          count: 1,
+          avgAmount: Math.max(t.debit, t.credit),
           firstDate: t.date,
           lastDate: t.date,
         });
       }
-
-      const group = groups.get(key)!;
-      group.transactions.push(t);
-      group.totalDebit += t.debit;
-      group.totalCredit += t.credit;
-      group.totalAmount += Math.max(t.debit, t.credit);
-      group.count += 1;
-
-      // Ažuriraj datume
-      const [dA, mA, yA] = t.date.split('.').map(Number);
-      const dateObj = new Date(yA, mA - 1, dA);
-      
-      const [dFirst, mFirst, yFirst] = group.firstDate.split('.').map(Number);
-      const firstDateObj = new Date(yFirst, mFirst - 1, dFirst);
-      
-      const [dLast, mLast, yLast] = group.lastDate.split('.').map(Number);
-      const lastDateObj = new Date(yLast, mLast - 1, dLast);
-
-      if (dateObj < firstDateObj) group.firstDate = t.date;
-      if (dateObj > lastDateObj) group.lastDate = t.date;
     });
 
     // Izračunaj proseke
@@ -70,8 +138,8 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
       group.avgAmount = group.totalAmount / group.count;
     });
 
-    return Array.from(groups.values());
-  }, [transactions]);
+    return groups;
+  }, [transactions, similarityThreshold]);
 
   const filteredAndSorted = useMemo(() => {
     let result = groupedData;
@@ -79,7 +147,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     // Filter
     if (searchTerm) {
       result = result.filter((g) =>
-        g.description.toLowerCase().includes(searchTerm.toLowerCase())
+        g.keywords.some(kw => kw.toLowerCase().includes(searchTerm.toLowerCase()))
       );
     }
 
@@ -99,12 +167,12 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     return result;
   }, [groupedData, searchTerm, sortBy, sortOrder]);
 
-  const toggleGroup = (description: string) => {
+  const toggleGroup = (index: number) => {
     const newExpanded = new Set(expandedGroups);
-    if (newExpanded.has(description)) {
-      newExpanded.delete(description);
+    if (newExpanded.has(index)) {
+      newExpanded.delete(index);
     } else {
-      newExpanded.add(description);
+      newExpanded.add(index);
     }
     setExpandedGroups(newExpanded);
   };
@@ -137,7 +205,7 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
           <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="Pretraži po opisu..."
+            placeholder="Pretraži po ključnim rečima..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2.5 bg-slate-800/50 border border-slate-700/50 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
@@ -160,6 +228,26 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
             {sortOrder === 'desc' ? '↓ Opadajuće' : '↑ Rastuće'}
           </button>
         </div>
+        {/* Similarity Threshold */}
+        <div className="bg-slate-800/30 border border-slate-700/30 rounded-lg p-3">
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-sm text-slate-300">Prag sličnosti</label>
+            <span className="text-sm font-mono text-blue-400">{(similarityThreshold * 100).toFixed(0)}%</span>
+          </div>
+          <input
+            type="range"
+            min="0.1"
+            max="1.0"
+            step="0.1"
+            value={similarityThreshold}
+            onChange={(e) => setSimilarityThreshold(parseFloat(e.target.value))}
+            className="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+          />
+          <div className="flex justify-between text-xs text-slate-500 mt-1">
+            <span>Labavo grupisanje</span>
+            <span>Strogo grupisanje</span>
+          </div>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 text-sm text-slate-400">
@@ -174,18 +262,19 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
             Nema pronađenih grupa
           </div>
         ) : (
-          filteredAndSorted.map((group) => {
-            const isExpanded = expandedGroups.has(group.description);
+          filteredAndSorted.map((group, idx) => {
+            const isExpanded = expandedGroups.has(idx);
             const isExpense = group.totalDebit > group.totalCredit;
+            const displayKeywords = group.keywords.slice(0, 5); // Prikaži max 5 ključnih reči
 
             return (
               <div
-                key={group.description}
+                key={idx}
                 className="bg-slate-800/50 border border-slate-700/30 rounded-xl overflow-hidden"
               >
                 {/* Group Header */}
                 <button
-                  onClick={() => toggleGroup(group.description)}
+                  onClick={() => toggleGroup(idx)}
                   className="w-full p-4 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
                 >
                   <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -199,7 +288,20 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
                       )}
                     </div>
                     <div className="min-w-0 flex-1 text-left">
-                      <p className="text-white font-medium truncate">{group.description}</p>
+                      <div className="flex flex-wrap gap-1 mb-1">
+                        {displayKeywords.map((kw, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-xs"
+                          >
+                            <Tag size={8} />
+                            {kw}
+                          </span>
+                        ))}
+                        {group.keywords.length > 5 && (
+                          <span className="text-xs text-slate-500">+{group.keywords.length - 5}</span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
                         <span className="flex items-center gap-1">
                           <Hash size={10} />
