@@ -1,28 +1,9 @@
-import { openDB, type IDBPDatabase } from 'idb';
+import { openDB, IDBPDatabase } from 'idb';
 import type { BankStatement } from '../types/BankStatement';
 
-const DB_NAME = 'BankStatementDB';
+const DB_NAME = 'BankovniIzvodiDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'statements';
-
-// Tip za sačuvani statement (bez pages data da ne bude preveliko)
-export interface SavedStatement {
-  id: string;
-  fileName: string;
-  uploadDate: string; // ISO string
-  metadata: {
-    title: string;
-    author: string;
-    subject: string;
-    creator: string;
-    producer: string;
-    pageCount: number;
-    fileSize: string;
-    fileName: string;
-  };
-  summary: BankStatement['summary'];
-  savedAt: string; // ISO string
-}
 
 let dbInstance: IDBPDatabase | null = null;
 
@@ -32,10 +13,7 @@ async function getDB(): Promise<IDBPDatabase> {
   dbInstance = await openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-        store.createIndex('fileName', 'fileName', { unique: false });
-        store.createIndex('uploadDate', 'uploadDate', { unique: false });
-        store.createIndex('savedAt', 'savedAt', { unique: false });
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
       }
     },
   });
@@ -43,116 +21,139 @@ async function getDB(): Promise<IDBPDatabase> {
   return dbInstance;
 }
 
-// Čuvanje statementa u bazu
-export async function saveStatement(statement: BankStatement): Promise<void> {
+/**
+ * Učitaj sve sačuvane izvode iz baze
+ */
+export async function loadAllStatements(): Promise<BankStatement[]> {
   const db = await getDB();
-  const saved: SavedStatement = {
-    id: statement.id,
-    fileName: statement.fileName,
-    uploadDate: statement.uploadDate.toISOString(),
-    metadata: statement.metadata,
-    summary: statement.summary,
-    savedAt: new Date().toISOString(),
-  };
-  await db.put(STORE_NAME, saved);
+  const all = await db.getAll(STORE_NAME);
+  // Rekonstruiši Date objekte iz stringova (JSON serializacija gubi Date tip)
+  return all.map((stmt: any) => ({
+    ...stmt,
+    uploadDate: new Date(stmt.uploadDate),
+    summary: {
+      ...stmt.summary,
+      transactions: stmt.summary.transactions.map((t: any) => ({
+        ...t,
+        dateObj: new Date(t.dateObj),
+      })),
+    },
+  }));
 }
 
-// Čuvanje više statementa
-export async function saveStatements(statements: BankStatement[]): Promise<void> {
+/**
+ * Sačuvaj jedan izvod u bazu (insert ili update)
+ */
+export async function saveStatement(statement: BankStatement): Promise<void> {
+  const db = await getDB();
+  await db.put(STORE_NAME, statement);
+}
+
+/**
+ * Sačuvaj sve izvode u bazu (zameni celu bazu)
+ */
+export async function saveAllStatements(statements: BankStatement[]): Promise<void> {
   const db = await getDB();
   const tx = db.transaction(STORE_NAME, 'readwrite');
+  const store = tx.objectStore(STORE_NAME);
   
-  for (const statement of statements) {
-    const saved: SavedStatement = {
-      id: statement.id,
-      fileName: statement.fileName,
-      uploadDate: statement.uploadDate.toISOString(),
-      metadata: statement.metadata,
-      summary: statement.summary,
-      savedAt: new Date().toISOString(),
-    };
-    await tx.store.put(saved);
+  // Obriši sve postojeće
+  await store.clear();
+  
+  // Sačuvaj sve nove
+  for (const stmt of statements) {
+    await store.put(stmt);
   }
   
   await tx.done;
 }
 
-// Učitavanje svih statementa iz baze
-export async function loadAllStatements(): Promise<BankStatement[]> {
-  const db = await getDB();
-  const savedStatements = await db.getAll(STORE_NAME);
-  
-  return savedStatements.map((saved) => ({
-    id: saved.id,
-    fileName: saved.fileName,
-    uploadDate: new Date(saved.uploadDate),
-    metadata: saved.metadata,
-    summary: saved.summary,
-    pages: [], // Pages data se ne čuva u bazi
-  }));
-}
-
-// Brisanje pojedinačnog statementa
+/**
+ * Obriši jedan izvod iz baze po ID-u
+ */
 export async function deleteStatement(id: string): Promise<void> {
   const db = await getDB();
   await db.delete(STORE_NAME, id);
 }
 
-// Brisanje cele baze
+/**
+ * Obriši SVE izvode iz baze (prazna baza)
+ */
 export async function deleteAllStatements(): Promise<void> {
   const db = await getDB();
-  await db.clear(STORE_NAME);
+  const tx = db.transaction(STORE_NAME, 'readwrite');
+  await tx.objectStore(STORE_NAME).clear();
+  await tx.done;
 }
 
-// Provera da li statement postoji u bazi
-export async function statementExists(id: string): Promise<boolean> {
-  const db = await getDB();
-  const result = await db.get(STORE_NAME, id);
-  return result !== undefined;
-}
-
-// Dobijanje veličine baze (približno)
+/**
+ * Vrati statistike o bazi (broj izvoda, procenjena veličina)
+ */
 export async function getDBStats(): Promise<{ count: number; estimatedSize: string }> {
   const db = await getDB();
-  const allItems = await db.getAll(STORE_NAME);
-  const count = allItems.length;
+  const count = await db.count(STORE_NAME);
   
-  // Procena veličine
-  const jsonSize = JSON.stringify(allItems).length;
-  const sizeKB = (jsonSize / 1024).toFixed(1);
-  const sizeMB = (jsonSize / (1024 * 1024)).toFixed(2);
-  
-  const estimatedSize = jsonSize > 1024 * 1024 
-    ? `${sizeMB} MB` 
-    : `${sizeKB} KB`;
+  // Procenjena veličina na osnovu broja izvoda
+  // Prosečan izvod ima ~50 transakcija, svaka ~200 bajta JSON
+  const estimatedBytes = count * 50 * 200;
+  let estimatedSize: string;
+  if (estimatedBytes < 1024) {
+    estimatedSize = `${estimatedBytes} B`;
+  } else if (estimatedBytes < 1024 * 1024) {
+    estimatedSize = `${(estimatedBytes / 1024).toFixed(1)} KB`;
+  } else {
+    estimatedSize = `${(estimatedBytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
   
   return { count, estimatedSize };
 }
 
-// Export baze kao JSON
+/**
+ * Exportuj celu bazu kao JSON string
+ */
 export async function exportDBAsJSON(): Promise<string> {
-  const db = await getDB();
-  const allItems = await db.getAll(STORE_NAME);
-  return JSON.stringify({
-    exportDate: new Date().toISOString(),
+  const statements = await loadAllStatements();
+  const exportData = {
     version: DB_VERSION,
-    count: allItems.length,
-    statements: allItems,
-  }, null, 2);
+    exportDate: new Date().toISOString(),
+    statementCount: statements.length,
+    statements,
+  };
+  return JSON.stringify(exportData, null, 2);
 }
 
-// Import baze iz JSON-a
+/**
+ * Importuj bazu iz JSON stringa
+ * @returns broj uvezenih izvoda
+ */
 export async function importDBFromJSON(jsonString: string): Promise<number> {
   const data = JSON.parse(jsonString);
-  const statements: SavedStatement[] = data.statements || [];
   
-  const db = await getDB();
-  const tx = db.transaction(STORE_NAME, 'readwrite');
-  
-  for (const stmt of statements) {
-    await tx.store.put(stmt);
+  if (!data.statements || !Array.isArray(data.statements)) {
+    throw new Error('Nevažeći format baze podataka. Očekuje se polje "statements".');
   }
   
-  await tx.done;
+  const statements: BankStatement[] = data.statements.map((stmt: any) => ({
+    ...stmt,
+    uploadDate: new Date(stmt.uploadDate),
+    summary: {
+      ...stmt.summary,
+      transactions: stmt.summary.transactions.map((t: any) => ({
+        ...t,
+        dateObj: new Date(t.dateObj),
+      })),
+    },
+  }));
+  
+  await saveAllStatements(statements);
   return statements.length;
+}
+
+/**
+ * Proveri da li baza postoji i ima podatke
+ */
+export async function isDatabaseEmpty(): Promise<boolean> {
+  const db = await getDB();
+  const count = await db.count(STORE_NAME);
+  return count === 0;
 }

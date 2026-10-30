@@ -8,6 +8,8 @@ import { StatementDetail } from './components/StatementDetail';
 import { ExportPanel } from './components/ExportPanel';
 import { FileInfo } from './components/FileInfo';
 import { ParserDebugView } from './components/ParserDebugView';
+import { GroupedTransactions } from './components/GroupedTransactions';
+import { GroupedByTags } from './components/GroupedByTags';
 import { parseBankStatement } from './utils/BankStatementParser';
 import { 
   saveStatement, 
@@ -21,7 +23,7 @@ import {
 import type { BankStatement } from './types/BankStatement';
 import type { PageData, PDFMetadata } from './types/App.types';
 import * as pdfjsLib from 'pdfjs-dist';
-import { Database, Trash2, Download, Upload, HardDrive, Check, AlertTriangle } from 'lucide-react';
+import { Database, Trash2, Download, Upload, HardDrive, Check, AlertTriangle, Euro, Banknote } from 'lucide-react';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -31,7 +33,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 export default function App() {
   const [statements, setStatements] = useState<BankStatement[]>([]);
   const [selectedStatementId, setSelectedStatementId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'charts' | 'statements' | 'detail' | 'export' | 'info'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'transactions' | 'grouped' | 'tags' | 'charts' | 'statements' | 'detail' | 'export' | 'info'>('dashboard');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showParserDebug, setShowParserDebug] = useState(false);
@@ -266,6 +268,7 @@ export default function App() {
       ...t,
       statementFileName: s.fileName,
       statementId: s.id,
+      currency: s.summary.currency,
     }))
   );
 
@@ -487,17 +490,18 @@ export default function App() {
           </div>
         ) : (
           <div className="space-y-6">
-            <div className="flex flex-wrap gap-2 border-b border-slate-700/50 pb-2">
-              {[
-                { id: 'dashboard', label: 'Pregled' },
-                { id: 'transactions', label: 'Sve stavke (hronološki)' },
-                { id: 'charts', label: 'Grafici' },
-                { id: 'statements', label: 'Izvodi' },
-                ...(selectedStatement ? [{ id: 'detail', label: 'Detalji izvoda' }] : []),
-                { id: 'export', label: 'Export' },
-                ...(selectedStatement ? [{ id: 'info', label: 'Info' }] : []),
-              ].map(tab => (
-                <button
+              <div className="flex flex-wrap gap-2 border-b border-slate-700/50 pb-2">
+                {[
+                  { id: 'dashboard', label: 'Pregled' },
+                  { id: 'transactions', label: 'Sve stavke (hronološki)' },
+                  { id: 'grouped', label: 'Grupisano po opisu' },
+                  { id: 'tags', label: 'Grupisano po tagovima' },
+                  { id: 'charts', label: 'Grafici' },
+                  { id: 'statements', label: 'Izvodi' },
+                  ...(selectedStatement ? [{ id: 'detail', label: 'Detalji izvoda' }] : []),
+                  { id: 'export', label: 'Export' },
+                  ...(selectedStatement ? [{ id: 'info', label: 'Info' }] : []),
+                ].map(tab => (                <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id as any)}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${
@@ -521,6 +525,14 @@ export default function App() {
                   currency="EUR"
                   statements={statements}
                 />
+              )}
+              {activeTab === 'grouped' && (
+                <GroupedTransactions
+                  statements={statements}
+                />
+              )}
+              {activeTab === 'tags' && (
+                <GroupedByTags statements={statements} />
               )}
               {activeTab === 'charts' && (
                 <AggregatedCharts summary={aggregatedSummary} />
