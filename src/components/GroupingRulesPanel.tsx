@@ -18,18 +18,25 @@ interface GroupingRulesPanelProps {
 /**
  * Primenjuje manuelna pravila na opis transakcije
  * Vraća prvo matched pravilo ili null
+ * Jedno pravilo može sadržati više uslova odvojenih zarezom (OR logika)
  */
 export function applyRules(description: string, rules: GroupingRule[]): GroupingRule | null {
   const enabledRules = rules.filter(r => r.enabled);
   
   for (const rule of enabledRules) {
     try {
-      const regex = rule.isRegex 
-        ? new RegExp(rule.pattern, 'i')
-        : new RegExp(rule.pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      // Podeli pattern po zarezima za više uslova
+      const conditions = rule.pattern.split(',').map(c => c.trim()).filter(c => c.length > 0);
       
-      if (regex.test(description)) {
-        return rule;
+      // Testiraj svaki uslov - ako bilo koji match-uje, pravilo se primenjuje
+      for (const condition of conditions) {
+        const regex = rule.isRegex 
+          ? new RegExp(condition, 'i')
+          : new RegExp(condition.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+        
+        if (regex.test(description)) {
+          return rule;
+        }
       }
     } catch (err) {
       console.error('Greška u regex pravilu:', rule.pattern, err);
@@ -124,7 +131,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
               type="text"
               value={newPattern}
               onChange={(e) => setNewPattern(e.target.value)}
-              placeholder="npr. ELEKTRONIKA ili KONVERZIJA.*EUR"
+              placeholder="npr. ELEKTRONIKA, KONVERZIJA, KAMATA"
               className="w-full px-3 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
             />
           </div>
@@ -201,7 +208,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
                       type="text"
                       value={rule.pattern}
                       onChange={(e) => updateRule(rule.id, { pattern: e.target.value })}
-                      placeholder="Pattern (tekst ili regex)"
+                      placeholder="uslov1, uslov2, uslov3..."
                       className="flex-1 px-2 py-1 bg-slate-800 border border-slate-700/50 rounded text-sm text-purple-400 font-mono focus:outline-none focus:ring-1 focus:ring-purple-500/50"
                     />
                     <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap">
@@ -244,8 +251,9 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
         <ul className="list-disc list-inside mt-2 space-y-1">
           <li>Pravila se primenjuju po redosledu (prvo match-ovano pravilo pobeđuje)</li>
           <li>Pattern može biti običan tekst ili regex (ako je uključeno)</li>
+          <li>Jedno pravilo može sadržati više uslova odvojenih zarezom (OR logika)</li>
           <li>Match-ovane transakcije se grupišu pod nazivom grupe</li>
-          <li>Manuelna pravila imaju prioritet nad automatskim grupisanjem</li>
+          <li>Sve transakcije koje ne matchuju nijedno pravilo idu u "Negrupisano"</li>
         </ul>
       </div>
     </div>
