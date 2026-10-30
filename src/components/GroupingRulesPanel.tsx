@@ -7,6 +7,7 @@ export interface GroupingRule {
   groupName: string;
   isRegex: boolean;
   enabled: boolean;
+  tag?: string; // Opcioni tag za grupisanje po tagovima
 }
 
 interface GroupingRulesPanelProps {
@@ -50,6 +51,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
   const [newPattern, setNewPattern] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
   const [newIsRegex, setNewIsRegex] = useState(false);
+  const [newTag, setNewTag] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const addRule = () => {
@@ -74,12 +76,14 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
       groupName: newGroupName.trim(),
       isRegex: newIsRegex,
       enabled: true,
+      tag: newTag.trim() || undefined,
     };
     
     onRulesChange([...rules, newRule]);
     setNewPattern('');
     setNewGroupName('');
     setNewIsRegex(false);
+    setNewTag('');
     setError(null);
   };
 
@@ -124,7 +128,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
       <div className="bg-slate-900/50 rounded-lg p-4 space-y-3">
         <h4 className="text-sm font-medium text-white">Dodaj novo pravilo</h4>
         
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="text-xs text-slate-400 mb-1 block">Pattern (tekst ili regex)</label>
             <input
@@ -143,6 +147,17 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
               value={newGroupName}
               onChange={(e) => setNewGroupName(e.target.value)}
               placeholder="npr. Dobavljač - Elektronika"
+              className="w-full px-3 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            />
+          </div>
+          
+          <div>
+            <label className="text-xs text-slate-400 mb-1 block">🏷️ Tag (opciono)</label>
+            <input
+              type="text"
+              value={newTag}
+              onChange={(e) => setNewTag(e.target.value)}
+              placeholder="npr. Dobavljač, Banka, Režije..."
               className="w-full px-3 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
             />
           </div>
@@ -230,6 +245,18 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
                     placeholder="Naziv grupe"
                     className="w-full px-2 py-1 bg-slate-800 border border-slate-700/50 rounded text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500/50"
                   />
+                  
+                  {/* Tag input */}
+                  <div>
+                    <label className="text-xs text-slate-500 mb-0.5 block">🏷️ Tag</label>
+                    <input
+                      type="text"
+                      value={rule.tag || ''}
+                      onChange={(e) => updateRule(rule.id, { tag: e.target.value || undefined })}
+                      placeholder="Tag za grupisanje po tagovima (opciono)"
+                      className="w-full px-2 py-1 bg-slate-800 border border-slate-700/50 rounded text-sm text-cyan-400 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                    />
+                  </div>
                 </div>
                 
                 <button
@@ -253,6 +280,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
           <li>Pattern može biti običan tekst ili regex (ako je uključeno)</li>
           <li>Jedno pravilo može sadržati više uslova odvojenih zarezom (OR logika)</li>
           <li>Match-ovane transakcije se grupišu pod nazivom grupe</li>
+          <li>Uz svako pravilo možete dodati <strong>tag</strong> za grupisanje po tagovima</li>
           <li>Sve transakcije koje ne matchuju nijedno pravilo idu u "Negrupisano"</li>
         </ul>
       </div>

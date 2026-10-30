@@ -532,35 +532,7 @@ export default function App() {
                 />
               )}
               {activeTab === 'tags' && (
-                <div className="space-y-8">
-                  {/* EUR Tagovi */}
-                  {statements.some(s => s.summary.currency === 'EUR') && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <Euro size={20} className="text-blue-400" />
-                        <h3 className="text-lg font-semibold text-white">EUR Tagovi</h3>
-                      </div>
-                      <GroupedByTags
-                        transactions={allTransactions.filter(t => t.currency === 'EUR')}
-                        currency="EUR"
-                      />
-                    </div>
-                  )}
-                  
-                  {/* BAM Tagovi */}
-                  {statements.some(s => s.summary.currency === 'BAM') && (
-                    <div>
-                      <div className="flex items-center gap-2 mb-4">
-                        <Banknote size={20} className="text-green-400" />
-                        <h3 className="text-lg font-semibold text-white">BAM Tagovi</h3>
-                      </div>
-                      <GroupedByTags
-                        transactions={allTransactions.filter(t => t.currency === 'BAM')}
-                        currency="BAM"
-                      />
-                    </div>
-                  )}
-                </div>
+                <GroupedByTags statements={statements} />
               )}
               {activeTab === 'charts' && (
                 <AggregatedCharts summary={aggregatedSummary} />
