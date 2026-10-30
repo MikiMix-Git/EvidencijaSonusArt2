@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Transaction, formatCurrency } from '../utils/BankStatementParser';
 import { BankStatement } from '../types/BankStatement';
-import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, Building2, Calendar, ChevronDown, ChevronRight, Settings2, Euro, Banknote } from 'lucide-react';
+import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, Calendar, ChevronDown, ChevronRight, Settings2, Euro, Banknote } from 'lucide-react';
 import { GroupingRulesPanel, GroupingRule, applyRules } from './GroupingRulesPanel';
 
 interface GroupedTransactionsProps {
@@ -11,7 +11,7 @@ interface GroupedTransactionsProps {
 interface TransactionGroup {
   id: string;
   name: string;
-  type: 'counterparty' | 'manual' | 'other';
+  type: 'manual' | 'other';
   transactions: Transaction[];
   totalAmount: number;
   totalDebit: number;
@@ -20,59 +20,13 @@ interface TransactionGroup {
   avgAmount: number;
   firstDate: string;
   lastDate: string;
-  counterparty?: string;
 }
 
 // ============================================
-// COUNTERPARTY EXTRACTION
+// MANUAL GROUPING ONLY
 // ============================================
 
-/**
- * Izvlači ime firme/primaoca iz opisa transakcije
- */
-function extractCounterparty(description: string): string {
-  const desc = description.toUpperCase();
-  
-  // Pattern 1: "TD- ELEKTRONIKA D.O.O. CROATIA ZAGREB" ili "TD ELEKTRONIKA D.O.O."
-  const tdMatch = desc.match(/TD[-\s]?\s*([A-ZČŽŠĐĆ][A-ZČŽŠĐĆ\s]+(?:D\.O\.O\.|D\.D\.)[\s\w]*)/);
-  if (tdMatch) {
-    return cleanCounterparty(tdMatch[1]);
-  }
-  
-  // Pattern 2: "ALIQUANTUM IVANA SIBLA" (nakon iznosa)
-  const afterAmountMatch = desc.match(/EUR\s+[\d.,]+\s*([A-ZČŽŠĐĆ][A-ZČŽŠĐĆ\s]{3,}?)(?:\s+\d|\s+RACUN|\s+FAKTUR|\s+PRIJENOS|$)/);
-  if (afterAmountMatch) {
-    return cleanCounterparty(afterAmountMatch[1]);
-  }
-  
-  // Pattern 3: "D.O.O." ili "D.D." bilo gde
-  const companyMatch = desc.match(/([A-ZČŽŠĐĆ][A-ZČŽŠĐĆ\s]{2,})\s+(?:D\.O\.O\.|D\.D\.)/);
-  if (companyMatch) {
-    return cleanCounterparty(companyMatch[1]);
-  }
-  
-  return '';
-}
-
-function cleanCounterparty(name: string): string {
-  return name
-    .replace(/\s+/g, ' ')
-    .replace(/\b(D\.O\.O\.|D\.D\.)\b/gi, '')
-    .replace(/\b(CROATIA|ZAGREB|BEOGRAD|SARAJEVO|BANJA LUKA)\b/gi, '')
-    .replace(/\b(MAGAZINSKA|IVANA SIBLA|ULICA|TRG)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// ============================================
-// SMART GROUPING ALGORITHM
-// ============================================
-
-// ============================================
-// SMART GROUPING ALGORITHM
-// ============================================
-
-function smartGroupTransactions(
+function manualGroupTransactions(
   transactions: Transaction[],
   manualRules: GroupingRule[]
 ): TransactionGroup[] {
@@ -81,9 +35,8 @@ function smartGroupTransactions(
   transactions.forEach((t, index) => {
     let groupName = '';
     let groupType: TransactionGroup['type'] = 'other';
-    let counterparty = '';
     
-    // Korak 1: Proveri manuelna pravila (najviši prioritet)
+    // Samo manuelna pravila - ako ne matchuje nijedno, ide u "Negrupisano"
     if (manualRules.length > 0) {
       const matchedRule = applyRules(t.description, manualRules);
       if (matchedRule) {
@@ -92,30 +45,10 @@ function smartGroupTransactions(
       }
     }
     
-    // Korak 2: Ako nema manuelnog pravila, probaj counterparty extraction
+    // Ako ne matchuje nijedno pravilo, grupiši u "Negrupisano"
     if (!groupName) {
-      counterparty = extractCounterparty(t.description);
-      if (counterparty) {
-        groupName = `🏢 ${counterparty}`;
-        groupType = 'counterparty';
-      }
-    }
-    
-    // Korak 3: Ako ništa ne matchuje, grupiši po prvoj značajnoj reči
-    if (!groupName) {
-      const words = t.description
-        .toLowerCase()
-        .replace(/[^\w\s]/g, ' ')
-        .split(/\s+/)
-        .filter(w => w.length > 2 && !/^\d+$/.test(w));
-      
-      if (words.length > 0) {
-        groupName = `📄 ${words[0].charAt(0).toUpperCase() + words[0].slice(1)}`;
-        groupType = 'other';
-      } else {
-        groupName = '📄 Ostalo';
-        groupType = 'other';
-      }
+      groupName = '❓ Negrupisano';
+      groupType = 'other';
     }
     
     // Dodaj transakciju u grupu
@@ -132,7 +65,6 @@ function smartGroupTransactions(
         avgAmount: 0,
         firstDate: t.date,
         lastDate: t.date,
-        counterparty: counterparty || undefined,
       });
     }
     
@@ -165,7 +97,7 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
   const [sortBy, setSortBy] = useState<'total' | 'count' | 'avg'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [typeFilter, setTypeFilter] = useState<'all' | 'counterparty' | 'manual' | 'other'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'manual' | 'other'>('all');
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   const [manualRules, setManualRules] = useState<GroupingRule[]>(() => {
     try {
@@ -207,7 +139,7 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
 
   // Grupiši EUR transakcije
   const eurGroupedData = useMemo(() => {
-    let groups = smartGroupTransactions(eurTransactions, manualRules);
+    let groups = manualGroupTransactions(eurTransactions, manualRules);
     
     // Filtriraj po tipu
     if (typeFilter !== 'all') {
@@ -237,7 +169,7 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
 
   // Grupiši BAM transakcije
   const bamGroupedData = useMemo(() => {
-    let groups = smartGroupTransactions(bamTransactions, manualRules);
+    let groups = manualGroupTransactions(bamTransactions, manualRules);
     
     // Filtriraj po tipu
     if (typeFilter !== 'all') {
@@ -335,13 +267,11 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-semibold text-white truncate">{group.name}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
-                        group.type === 'counterparty' ? 'bg-blue-500/20 text-blue-400' :
                         group.type === 'manual' ? 'bg-green-500/20 text-green-400' :
                         'bg-slate-700/50 text-slate-400'
                       }`}>
-                        {group.type === 'counterparty' && '🏢 Primalac'}
                         {group.type === 'manual' && '📌 Pravilo'}
-                        {group.type === 'other' && '📄 Ostalo'}
+                        {group.type === 'other' && '❓ Negrupisano'}
                       </span>
                     </div>
                     <div className="flex items-center gap-4 text-xs text-slate-400">
@@ -481,9 +411,8 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
             className="px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
           >
             <option value="all">Svi tipovi</option>
-            <option value="counterparty">🏢 Po primaocu</option>
             <option value="manual">📌 Manuelna pravila</option>
-            <option value="other">📄 Ostalo</option>
+            <option value="other">❓ Negrupisano</option>
           </select>
           
           <select
