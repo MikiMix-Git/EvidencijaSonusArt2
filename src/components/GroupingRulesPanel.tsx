@@ -92,15 +92,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
     ));
   };
 
-  // Primeri pravila
-  const examples: { pattern: string; groupName: string; isRegex: boolean }[] = [
-    { pattern: 'ELEKTRONIKA', groupName: 'Dobavljač - Elektronika', isRegex: false },
-    { pattern: 'KONVERZIJA', groupName: 'Banka - Konverzija', isRegex: false },
-    { pattern: 'KAMATA', groupName: 'Banka - Kamata', isRegex: false },
-    { pattern: 'GPP', groupName: 'Banka - GPP naknada', isRegex: false },
-    { pattern: 'ALIQUANTUM', groupName: 'Dobavljač - Aliquantum', isRegex: false },
-    { pattern: 'NAKNADA.*KONVERZIJ', groupName: 'Naknada za konverziju', isRegex: true },
-  ];
+
 
   return (
     <div className="bg-slate-800/50 border border-purple-500/30 rounded-xl p-5 space-y-4">
@@ -186,34 +178,49 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
             {rules.map((rule, index) => (
               <div
                 key={rule.id}
-                className={`bg-slate-900/50 rounded-lg p-3 flex items-center gap-3 ${
+                className={`bg-slate-900/50 rounded-lg p-3 flex items-start gap-3 ${
                   !rule.enabled ? 'opacity-50' : ''
                 }`}
               >
-                <span className="text-xs text-slate-500 font-mono w-6">#{index + 1}</span>
+                <div className="flex flex-col items-center gap-2 pt-1">
+                  <span className="text-xs text-slate-500 font-mono">#{index + 1}</span>
+                  
+                  <input
+                    type="checkbox"
+                    checked={rule.enabled}
+                    onChange={() => toggleRule(rule.id)}
+                    className="w-4 h-4 bg-slate-700 border-slate-600 text-green-500 rounded"
+                    title={rule.enabled ? 'Onemogući pravilo' : 'Omogući pravilo'}
+                  />
+                </div>
                 
-                <input
-                  type="checkbox"
-                  checked={rule.enabled}
-                  onChange={() => toggleRule(rule.id)}
-                  className="w-4 h-4 bg-slate-700 border-slate-600 text-green-500 rounded"
-                />
-                
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <code className="text-xs bg-slate-800 px-2 py-0.5 rounded text-purple-400 font-mono">
-                      {rule.pattern}
-                    </code>
-                    {rule.isRegex && (
-                      <span className="text-xs bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded">
-                        regex
-                      </span>
-                    )}
+                <div className="flex-1 min-w-0 space-y-2">
+                  {/* Pattern input */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={rule.pattern}
+                      onChange={(e) => updateRule(rule.id, { pattern: e.target.value })}
+                      placeholder="Pattern (tekst ili regex)"
+                      className="flex-1 px-2 py-1 bg-slate-800 border border-slate-700/50 rounded text-sm text-purple-400 font-mono focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                    />
+                    <label className="flex items-center gap-1 cursor-pointer whitespace-nowrap">
+                      <input
+                        type="checkbox"
+                        checked={rule.isRegex}
+                        onChange={(e) => updateRule(rule.id, { isRegex: e.target.checked })}
+                        className="w-3.5 h-3.5 bg-slate-700 border-slate-600 text-blue-500 rounded"
+                      />
+                      <span className="text-xs text-slate-400">Regex</span>
+                    </label>
                   </div>
+                  
+                  {/* Group name input */}
                   <input
                     type="text"
                     value={rule.groupName}
                     onChange={(e) => updateRule(rule.id, { groupName: e.target.value })}
+                    placeholder="Naziv grupe"
                     className="w-full px-2 py-1 bg-slate-800 border border-slate-700/50 rounded text-sm text-white focus:outline-none focus:ring-1 focus:ring-purple-500/50"
                   />
                 </div>
@@ -221,6 +228,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
                 <button
                   onClick={() => removeRule(rule.id)}
                   className="p-2 hover:bg-red-500/10 text-slate-400 hover:text-red-400 rounded-lg transition-colors"
+                  title="Obriši pravilo"
                 >
                   <Trash2 size={16} />
                 </button>
@@ -229,27 +237,6 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
           </div>
         </div>
       )}
-
-      {/* Examples */}
-      <div className="space-y-2">
-        <h4 className="text-sm font-medium text-white">💡 Primeri pravila</h4>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {examples.map((example, i) => (
-            <button
-              key={i}
-              onClick={() => {
-                setNewPattern(example.pattern);
-                setNewGroupName(example.groupName);
-                setNewIsRegex(example.isRegex);
-              }}
-              className="text-left p-2 bg-slate-900/30 hover:bg-slate-800/50 border border-slate-700/30 rounded-lg text-xs transition-colors"
-            >
-              <div className="text-purple-400 font-mono mb-1">{example.pattern}</div>
-              <div className="text-slate-400">{example.groupName}</div>
-            </button>
-          ))}
-        </div>
-      </div>
 
       {/* Info */}
       <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-xs text-blue-300">

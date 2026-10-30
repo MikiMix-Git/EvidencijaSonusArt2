@@ -11,7 +11,7 @@ interface GroupedTransactionsProps {
 interface TransactionGroup {
   id: string;
   name: string;
-  type: 'counterparty' | 'pattern' | 'manual' | 'other';
+  type: 'counterparty' | 'manual' | 'other';
   transactions: Transaction[];
   totalAmount: number;
   totalDebit: number;
@@ -21,7 +21,6 @@ interface TransactionGroup {
   firstDate: string;
   lastDate: string;
   counterparty?: string;
-  patternName?: string;
 }
 
 // ============================================
@@ -66,40 +65,8 @@ function cleanCounterparty(name: string): string {
 }
 
 // ============================================
-// PATTERN-BASED CLASSIFICATION
+// SMART GROUPING ALGORITHM
 // ============================================
-
-interface TransactionPattern {
-  name: string;
-  pattern: RegExp;
-  priority: number;
-  icon: string;
-}
-
-const DEFAULT_PATTERNS: TransactionPattern[] = [
-  { name: 'Naknada za konverziju', pattern: /NAKNADA.*KONVERZIJ/i, priority: 1, icon: '💱' },
-  { name: 'Konverzija valute', pattern: /EXCH.*KONVERZIJA|KONVERZIJA.*EUR\/BAM/i, priority: 2, icon: '💱' },
-  { name: 'Kamata', pattern: /KAMATA/i, priority: 3, icon: '📈' },
-  { name: 'GPP naknada', pattern: /GPP/i, priority: 4, icon: '🏦' },
-  { name: 'Bankarska provizija', pattern: /PROVIZIJA|NAKNADA.*BANK/i, priority: 5, icon: '🏦' },
-  { name: 'Plata', pattern: /PLATA|SALARY|WAGES/i, priority: 6, icon: '💰' },
-  { name: 'Stanarina', pattern: /STANARINA|RENT|KIRIJA/i, priority: 7, icon: '🏠' },
-  { name: 'Režije', pattern: /ELEKTRO|VODA|PLIN|TOPLAN|TELEKOM|INTERNET|STRUJA/i, priority: 8, icon: '💡' },
-  { name: 'Gorivo', pattern: /GORIVO|BENZ|SHELL|INA|NIS|PETROL|FUEL/i, priority: 9, icon: '⛽' },
-  { name: 'Transfer', pattern: /PRIJENOS|PLACANJE|FAKTUR/i, priority: 10, icon: '🔄' },
-];
-
-function classifyByPattern(description: string): { name: string; icon: string } | null {
-  const sortedPatterns = [...DEFAULT_PATTERNS].sort((a, b) => a.priority - b.priority);
-  
-  for (const { name, pattern, icon } of sortedPatterns) {
-    if (pattern.test(description)) {
-      return { name, icon };
-    }
-  }
-  
-  return null;
-}
 
 // ============================================
 // SMART GROUPING ALGORITHM
@@ -115,7 +82,6 @@ function smartGroupTransactions(
     let groupName = '';
     let groupType: TransactionGroup['type'] = 'other';
     let counterparty = '';
-    let patternName = '';
     
     // Korak 1: Proveri manuelna pravila (najviši prioritet)
     if (manualRules.length > 0) {
@@ -126,17 +92,7 @@ function smartGroupTransactions(
       }
     }
     
-    // Korak 2: Ako nema manuelnog pravila, probaj pattern-based
-    if (!groupName) {
-      const patternMatch = classifyByPattern(t.description);
-      if (patternMatch) {
-        groupName = `${patternMatch.icon} ${patternMatch.name}`;
-        groupType = 'pattern';
-        patternName = patternMatch.name;
-      }
-    }
-    
-    // Korak 3: Ako nema pattern-a, probaj counterparty extraction
+    // Korak 2: Ako nema manuelnog pravila, probaj counterparty extraction
     if (!groupName) {
       counterparty = extractCounterparty(t.description);
       if (counterparty) {
@@ -145,7 +101,7 @@ function smartGroupTransactions(
       }
     }
     
-    // Korak 4: Ako ništa ne matchuje, grupiši po prvoj značajnoj reči
+    // Korak 3: Ako ništa ne matchuje, grupiši po prvoj značajnoj reči
     if (!groupName) {
       const words = t.description
         .toLowerCase()
@@ -177,7 +133,6 @@ function smartGroupTransactions(
         firstDate: t.date,
         lastDate: t.date,
         counterparty: counterparty || undefined,
-        patternName: patternName || undefined,
       });
     }
     
@@ -210,7 +165,7 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
   const [sortBy, setSortBy] = useState<'total' | 'count' | 'avg'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [typeFilter, setTypeFilter] = useState<'all' | 'counterparty' | 'pattern' | 'manual' | 'other'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'counterparty' | 'manual' | 'other'>('all');
   const [showRulesPanel, setShowRulesPanel] = useState(false);
   const [manualRules, setManualRules] = useState<GroupingRule[]>(() => {
     try {
@@ -381,12 +336,10 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
                       <span className="font-semibold text-white truncate">{group.name}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full ${
                         group.type === 'counterparty' ? 'bg-blue-500/20 text-blue-400' :
-                        group.type === 'pattern' ? 'bg-purple-500/20 text-purple-400' :
                         group.type === 'manual' ? 'bg-green-500/20 text-green-400' :
                         'bg-slate-700/50 text-slate-400'
                       }`}>
                         {group.type === 'counterparty' && '🏢 Primalac'}
-                        {group.type === 'pattern' && '🏷️ Obrazac'}
                         {group.type === 'manual' && '📌 Pravilo'}
                         {group.type === 'other' && '📄 Ostalo'}
                       </span>
@@ -529,7 +482,6 @@ export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
           >
             <option value="all">Svi tipovi</option>
             <option value="counterparty">🏢 Po primaocu</option>
-            <option value="pattern">🏷️ Po obrascu</option>
             <option value="manual">📌 Manuelna pravila</option>
             <option value="other">📄 Ostalo</option>
           </select>
