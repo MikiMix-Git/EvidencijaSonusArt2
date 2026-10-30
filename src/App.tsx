@@ -23,7 +23,7 @@ import {
 import type { BankStatement } from './types/BankStatement';
 import type { PageData, PDFMetadata } from './types/App.types';
 import * as pdfjsLib from 'pdfjs-dist';
-import { Database, Trash2, Download, Upload, HardDrive, Check, AlertTriangle } from 'lucide-react';
+import { Database, Trash2, Download, Upload, HardDrive, Check, AlertTriangle, Euro, Banknote } from 'lucide-react';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
@@ -268,6 +268,7 @@ export default function App() {
       ...t,
       statementFileName: s.fileName,
       statementId: s.id,
+      currency: s.summary.currency,
     }))
   );
 
@@ -527,15 +528,39 @@ export default function App() {
               )}
               {activeTab === 'grouped' && (
                 <GroupedTransactions
-                  transactions={allTransactions}
-                  currency="EUR"
+                  statements={statements}
                 />
               )}
               {activeTab === 'tags' && (
-                <GroupedByTags
-                  transactions={allTransactions}
-                  currency="EUR"
-                />
+                <div className="space-y-8">
+                  {/* EUR Tagovi */}
+                  {statements.some(s => s.summary.currency === 'EUR') && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <Euro size={20} className="text-blue-400" />
+                        <h3 className="text-lg font-semibold text-white">EUR Tagovi</h3>
+                      </div>
+                      <GroupedByTags
+                        transactions={allTransactions.filter(t => t.currency === 'EUR')}
+                        currency="EUR"
+                      />
+                    </div>
+                  )}
+                  
+                  {/* BAM Tagovi */}
+                  {statements.some(s => s.summary.currency === 'BAM') && (
+                    <div>
+                      <div className="flex items-center gap-2 mb-4">
+                        <Banknote size={20} className="text-green-400" />
+                        <h3 className="text-lg font-semibold text-white">BAM Tagovi</h3>
+                      </div>
+                      <GroupedByTags
+                        transactions={allTransactions.filter(t => t.currency === 'BAM')}
+                        currency="BAM"
+                      />
+                    </div>
+                  )}
+                </div>
               )}
               {activeTab === 'charts' && (
                 <AggregatedCharts summary={aggregatedSummary} />

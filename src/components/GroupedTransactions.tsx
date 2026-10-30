@@ -1,11 +1,11 @@
 import { useState, useMemo } from 'react';
 import { Transaction, formatCurrency } from '../utils/BankStatementParser';
-import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, Building2, Calendar, ChevronDown, ChevronRight, Settings2 } from 'lucide-react';
+import { BankStatement } from '../types/BankStatement';
+import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, Building2, Calendar, ChevronDown, ChevronRight, Settings2, Euro, Banknote } from 'lucide-react';
 import { GroupingRulesPanel, GroupingRule, applyRules } from './GroupingRulesPanel';
 
 interface GroupedTransactionsProps {
-  transactions: Transaction[];
-  currency: string;
+  statements: BankStatement[];
 }
 
 interface TransactionGroup {
@@ -205,7 +205,7 @@ function smartGroupTransactions(
 // KOMPONENTA
 // ============================================
 
-export function GroupedTransactions({ transactions, currency }: GroupedTransactionsProps) {
+export function GroupedTransactions({ statements }: GroupedTransactionsProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'total' | 'count' | 'avg'>('total');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -231,8 +231,28 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     }
   };
 
-  const groupedData = useMemo(() => {
-    let groups = smartGroupTransactions(transactions, manualRules);
+  // Razdvoji transakcije po valuti
+  const { eurTransactions, bamTransactions } = useMemo(() => {
+    const eur: Transaction[] = [];
+    const bam: Transaction[] = [];
+    
+    statements.forEach(statement => {
+      const currency = statement.summary.currency;
+      statement.summary.transactions.forEach(transaction => {
+        if (currency === 'EUR') {
+          eur.push(transaction);
+        } else if (currency === 'BAM') {
+          bam.push(transaction);
+        }
+      });
+    });
+    
+    return { eurTransactions: eur, bamTransactions: bam };
+  }, [statements]);
+
+  // Grupiši EUR transakcije
+  const eurGroupedData = useMemo(() => {
+    let groups = smartGroupTransactions(eurTransactions, manualRules);
     
     // Filtriraj po tipu
     if (typeFilter !== 'all') {
@@ -258,7 +278,37 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
     });
     
     return groups;
-  }, [transactions, searchTerm, sortBy, sortOrder, typeFilter, manualRules]);
+  }, [eurTransactions, searchTerm, sortBy, sortOrder, typeFilter, manualRules]);
+
+  // Grupiši BAM transakcije
+  const bamGroupedData = useMemo(() => {
+    let groups = smartGroupTransactions(bamTransactions, manualRules);
+    
+    // Filtriraj po tipu
+    if (typeFilter !== 'all') {
+      groups = groups.filter(g => g.type === typeFilter);
+    }
+    
+    // Filtriraj po pretrazi
+    if (searchTerm) {
+      groups = groups.filter(g => 
+        g.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        g.transactions.some(t => t.description.toLowerCase().includes(searchTerm.toLowerCase()))
+      );
+    }
+    
+    // Sortiraj
+    groups.sort((a, b) => {
+      let comparison = 0;
+      if (sortBy === 'total') comparison = a.totalAmount - b.totalAmount;
+      else if (sortBy === 'count') comparison = a.count - b.count;
+      else if (sortBy === 'avg') comparison = a.avgAmount - b.avgAmount;
+      
+      return sortOrder === 'desc' ? -comparison : comparison;
+    });
+    
+    return groups;
+  }, [bamTransactions, searchTerm, sortBy, sortOrder, typeFilter, manualRules]);
 
   const toggleGroup = (groupId: string) => {
     setExpandedGroups(prev => {
@@ -273,19 +323,160 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
   };
 
   const expandAll = () => {
-    setExpandedGroups(new Set(groupedData.map(g => g.id)));
+    const allIds = [...eurGroupedData, ...bamGroupedData].map(g => g.id);
+    setExpandedGroups(new Set(allIds));
   };
 
   const collapseAll = () => {
     setExpandedGroups(new Set());
   };
 
-  const totalGroups = groupedData.length;
-  const totalTransactions = groupedData.reduce((sum, g) => sum + g.count, 0);
-  const totalAmount = groupedData.reduce((sum, g) => sum + g.totalAmount, 0);
+  const totalGroups = eurGroupedData.length + bamGroupedData.length;
+  const totalTransactions = eurGroupedData.reduce((sum: number, g: TransactionGroup) => sum + g.count, 0) + 
+                           bamGroupedData.reduce((sum: number, g: TransactionGroup) => sum + g.count, 0);
+  const totalEurAmount = eurGroupedData.reduce((sum: number, g: TransactionGroup) => sum + g.totalAmount, 0);
+  const totalBamAmount = bamGroupedData.reduce((sum: number, g: TransactionGroup) => sum + g.totalAmount, 0);
+
+  // Helper komponenta za renderovanje sekcije po valuti
+  const renderCurrencySection = (groups: TransactionGroup[], currency: string, label: string, icon: React.ReactNode) => {
+    if (groups.length === 0) return null;
+    
+    const sectionTotal = groups.reduce((sum, g) => sum + g.totalAmount, 0);
+    
+    return (
+      <div className="space-y-3">
+        {/* Currency Section Header */}
+        <div className={`flex items-center gap-3 p-3 rounded-xl border ${
+          currency === 'EUR' 
+            ? 'bg-blue-500/5 border-blue-500/20' 
+            : 'bg-green-500/5 border-green-500/20'
+        }`}>
+          {icon}
+          <div>
+            <h3 className="text-base font-semibold text-white">{label}</h3>
+            <p className="text-xs text-slate-400">
+              {groups.length} grupa • {groups.reduce((sum, g) => sum + g.count, 0)} transakcija • {formatCurrency(sectionTotal, currency)}
+            </p>
+          </div>
+        </div>
+
+        {/* Groups */}
+        <div className="space-y-2">
+          {groups.map((group: TransactionGroup) => (
+            <div key={group.id} className="bg-slate-800/50 border border-slate-700/30 rounded-xl overflow-hidden">
+              {/* Group Header */}
+              <button
+                onClick={() => toggleGroup(group.id)}
+                className="w-full p-4 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
+              >
+                <div className="flex items-center gap-3 flex-1 min-w-0">
+                  {expandedGroups.has(group.id) ? (
+                    <ChevronDown size={20} className="text-slate-400 shrink-0" />
+                  ) : (
+                    <ChevronRight size={20} className="text-slate-400 shrink-0" />
+                  )}
+                  
+                  <div className="flex-1 min-w-0 text-left">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-white truncate">{group.name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        group.type === 'counterparty' ? 'bg-blue-500/20 text-blue-400' :
+                        group.type === 'pattern' ? 'bg-purple-500/20 text-purple-400' :
+                        group.type === 'manual' ? 'bg-green-500/20 text-green-400' :
+                        'bg-slate-700/50 text-slate-400'
+                      }`}>
+                        {group.type === 'counterparty' && '🏢 Primalac'}
+                        {group.type === 'pattern' && '🏷️ Obrazac'}
+                        {group.type === 'manual' && '📌 Pravilo'}
+                        {group.type === 'other' && '📄 Ostalo'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 text-xs text-slate-400">
+                      <span className="flex items-center gap-1">
+                        <Hash size={12} />
+                        {group.count} transakcija
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Calendar size={12} />
+                        {group.firstDate} - {group.lastDate}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-4 shrink-0 ml-4">
+                  <div className="text-right">
+                    <div className="text-sm font-mono font-semibold text-white">
+                      {formatCurrency(group.totalAmount, currency)}
+                    </div>
+                    <div className="text-xs text-slate-400">
+                      Prosek: {formatCurrency(group.avgAmount, currency)}
+                    </div>
+                  </div>
+                </div>
+              </button>
+              
+              {/* Expanded Transactions */}
+              {expandedGroups.has(group.id) && (
+                <div className="border-t border-slate-700/30 bg-slate-900/30">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-900/50">
+                        <tr>
+                          <th className="text-left p-3 text-slate-400 font-medium">Datum</th>
+                          <th className="text-left p-3 text-slate-400 font-medium">Opis</th>
+                          <th className="text-right p-3 text-green-400 font-medium">Ulaz</th>
+                          <th className="text-right p-3 text-red-400 font-medium">Izlaz</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {group.transactions.map((t: Transaction, i: number) => (
+                          <tr key={i} className="border-t border-slate-700/20 hover:bg-slate-700/10 transition-colors">
+                            <td className="p-3 text-slate-300 whitespace-nowrap">{t.date}</td>
+                            <td className="p-3 text-white max-w-md truncate" title={t.description}>
+                              {t.description}
+                            </td>
+                            <td className="p-3 text-right font-mono whitespace-nowrap">
+                              {t.credit > 0 ? (
+                                <span className="text-green-400">+{formatCurrency(t.credit, currency)}</span>
+                              ) : (
+                                <span className="text-slate-600">-</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono whitespace-nowrap">
+                              {t.debit > 0 ? (
+                                <span className="text-red-400">-{formatCurrency(t.debit, currency)}</span>
+                              ) : (
+                                <span className="text-slate-600">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-900/50 border-t border-slate-700/30">
+                        <tr>
+                          <td colSpan={2} className="p-3 text-slate-400 font-medium">Ukupno:</td>
+                          <td className="p-3 text-right font-mono text-green-400 font-semibold">
+                            {formatCurrency(group.totalCredit, currency)}
+                          </td>
+                          <td className="p-3 text-right font-mono text-red-400 font-semibold">
+                            {formatCurrency(group.totalDebit, currency)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
         <div>
@@ -294,7 +485,9 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
             Grupisane transakcije
           </h2>
           <p className="text-sm text-slate-400">
-            {totalGroups} grupa • {totalTransactions} transakcija • {formatCurrency(totalAmount, currency)}
+            {totalGroups} grupa • {totalTransactions} transakcija
+            {eurGroupedData.length > 0 && <span className="text-blue-400"> • EUR: {formatCurrency(totalEurAmount, 'EUR')}</span>}
+            {bamGroupedData.length > 0 && <span className="text-green-400"> • BAM: {formatCurrency(totalBamAmount, 'BAM')}</span>}
           </p>
         </div>
         <button
@@ -376,119 +569,24 @@ export function GroupedTransactions({ transactions, currency }: GroupedTransacti
         </button>
       </div>
 
-      {/* Groups */}
-      <div className="space-y-3">
-        {groupedData.map((group) => (
-          <div key={group.id} className="bg-slate-800/50 border border-slate-700/30 rounded-xl overflow-hidden">
-            {/* Group Header */}
-            <button
-              onClick={() => toggleGroup(group.id)}
-              className="w-full p-4 flex items-center justify-between hover:bg-slate-700/20 transition-colors"
-            >
-              <div className="flex items-center gap-3 flex-1 min-w-0">
-                {expandedGroups.has(group.id) ? (
-                  <ChevronDown size={20} className="text-slate-400 shrink-0" />
-                ) : (
-                  <ChevronRight size={20} className="text-slate-400 shrink-0" />
-                )}
-                
-                <div className="flex-1 min-w-0 text-left">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="font-semibold text-white truncate">{group.name}</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      group.type === 'counterparty' ? 'bg-blue-500/20 text-blue-400' :
-                      group.type === 'pattern' ? 'bg-purple-500/20 text-purple-400' :
-                      group.type === 'manual' ? 'bg-green-500/20 text-green-400' :
-                      'bg-slate-700/50 text-slate-400'
-                    }`}>
-                      {group.type === 'counterparty' && '🏢 Primalac'}
-                      {group.type === 'pattern' && '🏷️ Obrazac'}
-                      {group.type === 'manual' && '📌 Pravilo'}
-                      {group.type === 'other' && '📄 Ostalo'}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-4 text-xs text-slate-400">
-                    <span className="flex items-center gap-1">
-                      <Hash size={12} />
-                      {group.count} transakcija
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar size={12} />
-                      {group.firstDate} - {group.lastDate}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-4 shrink-0 ml-4">
-                <div className="text-right">
-                  <div className="text-sm font-mono font-semibold text-white">
-                    {formatCurrency(group.totalAmount, currency)}
-                  </div>
-                  <div className="text-xs text-slate-400">
-                    Prosek: {formatCurrency(group.avgAmount, currency)}
-                  </div>
-                </div>
-              </div>
-            </button>
-            
-            {/* Expanded Transactions */}
-            {expandedGroups.has(group.id) && (
-              <div className="border-t border-slate-700/30 bg-slate-900/30">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-slate-900/50">
-                      <tr>
-                        <th className="text-left p-3 text-slate-400 font-medium">Datum</th>
-                        <th className="text-left p-3 text-slate-400 font-medium">Opis</th>
-                        <th className="text-right p-3 text-green-400 font-medium">Ulaz</th>
-                        <th className="text-right p-3 text-red-400 font-medium">Izlaz</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {group.transactions.map((t, i) => (
-                        <tr key={i} className="border-t border-slate-700/20 hover:bg-slate-700/10 transition-colors">
-                          <td className="p-3 text-slate-300 whitespace-nowrap">{t.date}</td>
-                          <td className="p-3 text-white max-w-md truncate" title={t.description}>
-                            {t.description}
-                          </td>
-                          <td className="p-3 text-right font-mono whitespace-nowrap">
-                            {t.credit > 0 ? (
-                              <span className="text-green-400">+{formatCurrency(t.credit, currency)}</span>
-                            ) : (
-                              <span className="text-slate-600">-</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-right font-mono whitespace-nowrap">
-                            {t.debit > 0 ? (
-                              <span className="text-red-400">-{formatCurrency(t.debit, currency)}</span>
-                            ) : (
-                              <span className="text-slate-600">-</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-slate-900/50 border-t border-slate-700/30">
-                      <tr>
-                        <td colSpan={2} className="p-3 text-slate-400 font-medium">Ukupno:</td>
-                        <td className="p-3 text-right font-mono text-green-400 font-semibold">
-                          {formatCurrency(group.totalCredit, currency)}
-                        </td>
-                        <td className="p-3 text-right font-mono text-red-400 font-semibold">
-                          {formatCurrency(group.totalDebit, currency)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+      {/* EUR Section */}
+      {renderCurrencySection(
+        eurGroupedData, 
+        'EUR', 
+        'EUR Izvodi',
+        <Euro size={24} className="text-blue-400" />
+      )}
 
-      {groupedData.length === 0 && (
+      {/* BAM Section */}
+      {renderCurrencySection(
+        bamGroupedData, 
+        'BAM', 
+        'BAM Izvodi',
+        <Banknote size={24} className="text-green-400" />
+      )}
+
+      {/* Empty State */}
+      {eurGroupedData.length === 0 && bamGroupedData.length === 0 && (
         <div className="text-center py-12 text-slate-400">
           <Filter size={48} className="mx-auto mb-3 opacity-50" />
           <p>Nema grupa koje odgovaraju filterima</p>
