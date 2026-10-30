@@ -1,14 +1,6 @@
-import { useState } from 'react';
-import { Plus, Trash2, X, Save, AlertCircle } from 'lucide-react';
-
-export interface GroupingRule {
-  id: string;
-  pattern: string; // regex ili plain text
-  groupName: string;
-  isRegex: boolean;
-  enabled: boolean;
-  tag?: string; // Opcioni tag za grupisanje po tagovima
-}
+import { useState, useMemo } from 'react';
+import { Plus, Trash2, X, Save, AlertCircle, Tag } from 'lucide-react';
+import { GroupingRule } from '../types/GroupingRule';
 
 interface GroupingRulesPanelProps {
   rules: GroupingRule[];
@@ -16,35 +8,82 @@ interface GroupingRulesPanelProps {
   onClose: () => void;
 }
 
-/**
- * Primenjuje manuelna pravila na opis transakcije
- * Vraća prvo matched pravilo ili null
- * Jedno pravilo može sadržati više uslova odvojenih zarezom (OR logika)
- */
-export function applyRules(description: string, rules: GroupingRule[]): GroupingRule | null {
-  const enabledRules = rules.filter(r => r.enabled);
-  
-  for (const rule of enabledRules) {
-    try {
-      // Podeli pattern po zarezima za više uslova
-      const conditions = rule.pattern.split(',').map(c => c.trim()).filter(c => c.length > 0);
+// Komponenta za autocomplete tagova
+function TagAutocomplete({ 
+  value, 
+  onChange, 
+  existingTags,
+  placeholder 
+}: { 
+  value: string;
+  onChange: (value: string) => void;
+  existingTags: string[];
+  placeholder?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredTags = useMemo(() => {
+    if (!searchTerm) return existingTags;
+    return existingTags.filter(tag => 
+      tag.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+  }, [existingTags, searchTerm]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.value;
+    onChange(newValue);
+    setSearchTerm(newValue);
+    setIsOpen(true);
+  };
+
+  const handleSelectTag = (tag: string) => {
+    onChange(tag);
+    setSearchTerm('');
+    setIsOpen(false);
+  };
+
+  const handleFocus = () => {
+    setIsOpen(true);
+  };
+
+  const handleBlur = () => {
+    // Delay close to allow click on dropdown
+    setTimeout(() => setIsOpen(false), 200);
+  };
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Tag size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-cyan-400 pointer-events-none" />
+        <input
+          type="text"
+          value={value}
+          onChange={handleInputChange}
+          onFocus={handleFocus}
+          onBlur={handleBlur}
+          placeholder={placeholder || "Izaberi ili unesi novi tag"}
+          className="w-full pl-8 pr-3 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-cyan-400 text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+        />
+      </div>
       
-      // Testiraj svaki uslov - ako bilo koji match-uje, pravilo se primenjuje
-      for (const condition of conditions) {
-        const regex = rule.isRegex 
-          ? new RegExp(condition, 'i')
-          : new RegExp(condition.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-        
-        if (regex.test(description)) {
-          return rule;
-        }
-      }
-    } catch (err) {
-      console.error('Greška u regex pravilu:', rule.pattern, err);
-    }
-  }
-  
-  return null;
+      {isOpen && filteredTags.length > 0 && (
+        <div className="absolute z-10 w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+          {filteredTags.map((tag, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => handleSelectTag(tag)}
+              className="w-full px-3 py-2 text-left text-sm text-white hover:bg-slate-700 transition-colors flex items-center gap-2"
+            >
+              <Tag size={12} className="text-cyan-400" />
+              {tag}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRulesPanelProps) {
@@ -53,6 +92,17 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
   const [newIsRegex, setNewIsRegex] = useState(false);
   const [newTag, setNewTag] = useState('');
   const [error, setError] = useState<string | null>(null);
+
+  // Izvuci sve postojeće tagove iz pravila
+  const existingTags = useMemo(() => {
+    const tags = new Set<string>();
+    rules.forEach(rule => {
+      if (rule.tag) {
+        tags.add(rule.tag);
+      }
+    });
+    return Array.from(tags).sort();
+  }, [rules]);
 
   const addRule = () => {
     if (!newPattern.trim() || !newGroupName.trim()) {
@@ -153,12 +203,11 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
           
           <div>
             <label className="text-xs text-slate-400 mb-1 block">🏷️ Tag (opciono)</label>
-            <input
-              type="text"
+            <TagAutocomplete
               value={newTag}
-              onChange={(e) => setNewTag(e.target.value)}
-              placeholder="npr. Dobavljač, Banka, Režije..."
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-700/50 rounded-lg text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+              onChange={setNewTag}
+              existingTags={existingTags}
+              placeholder="Izaberi ili unesi novi tag"
             />
           </div>
         </div>
@@ -249,12 +298,11 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
                   {/* Tag input */}
                   <div>
                     <label className="text-xs text-slate-500 mb-0.5 block">🏷️ Tag</label>
-                    <input
-                      type="text"
+                    <TagAutocomplete
                       value={rule.tag || ''}
-                      onChange={(e) => updateRule(rule.id, { tag: e.target.value || undefined })}
-                      placeholder="Tag za grupisanje po tagovima (opciono)"
-                      className="w-full px-2 py-1 bg-slate-800 border border-slate-700/50 rounded text-sm text-cyan-400 focus:outline-none focus:ring-1 focus:ring-purple-500/50"
+                      onChange={(value) => updateRule(rule.id, { tag: value || undefined })}
+                      existingTags={existingTags}
+                      placeholder="Izaberi ili unesi novi tag"
                     />
                   </div>
                 </div>
@@ -281,6 +329,7 @@ export function GroupingRulesPanel({ rules, onRulesChange, onClose }: GroupingRu
           <li>Jedno pravilo može sadržati više uslova odvojenih zarezom (OR logika)</li>
           <li>Match-ovane transakcije se grupišu pod nazivom grupe</li>
           <li>Uz svako pravilo možete dodati <strong>tag</strong> za grupisanje po tagovima</li>
+          <li>Kod tagova možete <strong>izabrati postojeći</strong> iz liste ili <strong>uneti novi</strong></li>
           <li>Sve transakcije koje ne matchuju nijedno pravilo idu u "Negrupisano"</li>
         </ul>
       </div>

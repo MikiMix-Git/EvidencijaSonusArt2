@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from 'react';
 import { Transaction, formatCurrency } from '../utils/BankStatementParser';
 import { BankStatement } from '../types/BankStatement';
-import { GroupingRule } from './GroupingRulesPanel';
+import { GroupingRule } from '../types/GroupingRule';
 import { tagTransactionsWithRules, groupByTags, filterTagGroups, TagGroup } from '../utils/tagExtractor';
 import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, X, ChevronDown, ChevronRight, Euro, Banknote } from 'lucide-react';
 
