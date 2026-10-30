@@ -1,5 +1,8 @@
 import { Transaction } from './BankStatementParser';
-import { GroupingRule, applyRules } from '../components/GroupingRulesPanel';
+import { GroupingRule, applyRules } from '../types/GroupingRule';
+
+export type { GroupingRule };
+export { applyRules };
 
 export interface Tag {
   id: string;

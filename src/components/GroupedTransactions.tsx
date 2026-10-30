@@ -2,7 +2,8 @@ import { useState, useMemo } from 'react';
 import { Transaction, formatCurrency } from '../utils/BankStatementParser';
 import { BankStatement } from '../types/BankStatement';
 import { Search, Filter, TrendingUp, TrendingDown, Hash, Tag, Calendar, ChevronDown, ChevronRight, Settings2, Euro, Banknote } from 'lucide-react';
-import { GroupingRulesPanel, GroupingRule, applyRules } from './GroupingRulesPanel';
+import { GroupingRulesPanel } from './GroupingRulesPanel';
+import { GroupingRule, applyRules } from '../types/GroupingRule';
 
 interface GroupedTransactionsProps {
   statements: BankStatement[];
